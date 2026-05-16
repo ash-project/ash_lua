@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 ash_lua contributors <https://github.com/ash-project/ash_lua/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 # The directory Mix will write compiled artifacts to.
 /_build/
 
@@ -9,6 +13,9 @@
 
 # Where third-party dependencies like ExDoc output generated docs.
 /doc/
+
+# Ignore .fetch files in case you like to edit your project deps locally.
+/.fetch
 
 # Temporary files, for example, from tests.
 /tmp/
@@ -22,3 +29,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 ash_lua-*.tar
 
+.vscode/
+
+notes

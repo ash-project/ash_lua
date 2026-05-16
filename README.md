@@ -1,11 +1,21 @@
+<!--
+SPDX-FileCopyrightText: 2026 ash_lua contributors <https://github.com/ash-project/ash_lua/graphs/contributors>
+
+SPDX-License-Identifier: MIT
+-->
+
 # AshLua
 
-**TODO: Add description**
+[![Hex version badge](https://img.shields.io/hexpm/v/ash_lua.svg)](https://hex.pm/packages/ash_lua)
+[![Hexdocs badge](https://img.shields.io/badge/docs-hexdocs-purple)](https://hexdocs.pm/ash_lua)
+
+AshLua provides function definitions to the [`lua`](https://hex.pm/packages/lua)
+Elixir package, ensuring a consistent actor, tenant (statically configured or
+dynamically supplied from the script), and context are merged into all calls.
 
 ## Installation
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `ash_lua` to your list of dependencies in `mix.exs`:
+Add `ash_lua` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
@@ -15,7 +25,8 @@ def deps do
 end
 ```
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/ash_lua>.
+Then run the installer:
 
+```sh
+mix igniter.install ash_lua
+```

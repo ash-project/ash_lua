@@ -141,6 +141,131 @@ defmodule AshLua.Encoder do
   defp stringify_key(k), do: to_string(k)
 
   @doc """
+  Encodes a result against a template produced by `AshLua.Fields.for_action/4`.
+
+  Walks the template recursively, pulling only the requested fields from records,
+  typed maps, tuples, and union values. `:passthrough` template nodes fall back to
+  the unconstrained `encode_result/1` path.
+  """
+  @spec encode_with_template(term(), term()) :: term()
+  def encode_with_template(value, template)
+
+  def encode_with_template(nil, _template), do: nil
+  def encode_with_template(value, :passthrough), do: encode_result(value)
+
+  def encode_with_template(%Ash.Page.Offset{} = page, {:array, sub}) do
+    results = Enum.map(page.results, &encode_with_template(&1, sub))
+
+    %{
+      "results" => results,
+      "count" => page.count,
+      "limit" => page.limit,
+      "offset" => page.offset,
+      "more?" => page.more?
+    }
+  end
+
+  def encode_with_template(%Ash.Page.Keyset{} = page, {:array, sub}) do
+    results = Enum.map(page.results, &encode_with_template(&1, sub))
+
+    %{
+      "results" => results,
+      "count" => page.count,
+      "limit" => page.limit,
+      "before" => page.before,
+      "after" => page.after,
+      "more?" => page.more?
+    }
+  end
+
+  def encode_with_template(list, {:array, sub}) when is_list(list) do
+    Enum.map(list, &encode_with_template(&1, sub))
+  end
+
+  def encode_with_template(record, {:resource, entries}) when is_map(record) do
+    Map.new(entries, fn entry -> encode_resource_entry(record, entry) end)
+  end
+
+  def encode_with_template(value, {:typed_map, entries}) do
+    normalized = normalize_typed_map(value)
+
+    Map.new(entries, fn {:typed_map_field, name, sub} ->
+      {Atom.to_string(name), encode_with_template(Map.get(normalized, name), sub)}
+    end)
+  end
+
+  def encode_with_template(tuple, {:tuple, entries}) when is_tuple(tuple) do
+    Map.new(entries, fn {:tuple_field, name, idx, sub} ->
+      value = if idx < tuple_size(tuple), do: elem(tuple, idx), else: nil
+      {Atom.to_string(name), encode_with_template(value, sub)}
+    end)
+  end
+
+  def encode_with_template(%Ash.Union{type: member, value: inner}, {:union, entries}) do
+    case Enum.find(entries, fn {:union_member, name, _} -> name == member end) do
+      {:union_member, _, sub} ->
+        %{"type" => Atom.to_string(member), "value" => encode_with_template(inner, sub)}
+
+      nil ->
+        %{"type" => Atom.to_string(member), "value" => encode_result(inner)}
+    end
+  end
+
+  def encode_with_template(value, {:union, _entries}), do: encode_result(value)
+
+  def encode_with_template(value, _template), do: encode_result(value)
+
+  defp encode_resource_entry(record, {:attr, name, sub}) do
+    {Atom.to_string(name), encode_with_template(Map.get(record, name), sub)}
+  end
+
+  defp encode_resource_entry(record, {:calc, name, sub}) do
+    {Atom.to_string(name), encode_with_template(unwrap_loaded(Map.get(record, name)), sub)}
+  end
+
+  defp encode_resource_entry(record, {:agg, name}) do
+    {Atom.to_string(name), encode_result(unwrap_loaded(Map.get(record, name)))}
+  end
+
+  defp encode_resource_entry(record, {:rel_one, name, sub}) do
+    value = Map.get(record, name)
+
+    encoded =
+      case value do
+        %Ash.NotLoaded{} -> nil
+        %Ash.ForbiddenField{} -> nil
+        nil -> nil
+        record_or_struct -> encode_with_template(record_or_struct, sub)
+      end
+
+    {Atom.to_string(name), encoded}
+  end
+
+  defp encode_resource_entry(record, {:rel_many, name, sub}) do
+    value = Map.get(record, name)
+
+    encoded =
+      case value do
+        %Ash.NotLoaded{} -> []
+        %Ash.ForbiddenField{} -> []
+        list when is_list(list) -> Enum.map(list, &encode_with_template(&1, sub))
+        _ -> []
+      end
+
+    {Atom.to_string(name), encoded}
+  end
+
+  defp unwrap_loaded(%Ash.NotLoaded{}), do: nil
+  defp unwrap_loaded(%Ash.ForbiddenField{}), do: nil
+  defp unwrap_loaded(value), do: value
+
+  defp normalize_typed_map(nil), do: %{}
+  defp normalize_typed_map(%_{} = struct), do: Map.from_struct(struct)
+  defp normalize_typed_map(map) when is_map(map), do: map
+  defp normalize_typed_map(list) when is_list(list), do: Map.new(list)
+  defp normalize_typed_map(_), do: %{}
+
+  @doc """
   Encodes an Ash error tree into a Lua-friendly table.
 
   Walks `Ash.Error.Invalid`/`Ash.Error.Forbidden` classes to their leaves, then dispatches each

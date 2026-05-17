@@ -12,7 +12,10 @@ defmodule AshLuaTest do
       {[id], _lua} =
         AshLua.eval!(
           """
-          local post, err = posts.post.create({ title = "Hello", body = "World" })
+          local post, err = posts.post.create({
+            title = "Hello", body = "World",
+            fields = { "id" }
+          })
           assert(err == nil)
           return post.id
           """,
@@ -48,7 +51,10 @@ defmodule AshLuaTest do
       {[title], _lua} =
         AshLua.eval!(
           """
-          local post = assert(posts.post.create({ title = "Assert works", body = "yes" }))
+          local post = assert(posts.post.create({
+            title = "Assert works", body = "yes",
+            fields = { "title" }
+          }))
           return post.title
           """,
           otp_app: :ash_lua
@@ -74,7 +80,7 @@ defmodule AshLuaTest do
       {[results], _lua} =
         AshLua.eval!(
           """
-          local r = assert(posts.post.read({}))
+          local r = assert(posts.post.read({ fields = { "title" } }))
           return r
           """,
           otp_app: :ash_lua
@@ -99,7 +105,8 @@ defmodule AshLuaTest do
             filter = { published = true },
             sort   = "title",
             limit  = 2,
-            offset = 1
+            offset = 1,
+            fields = { "title" }
           }))
           return r
           """,
@@ -120,7 +127,10 @@ defmodule AshLuaTest do
       {[updated], _lua} =
         AshLua.eval!(
           """
-          local p = assert(posts.post.update({ id = "#{post.id}", title = "Updated" }))
+          local p = assert(posts.post.update({
+            id = "#{post.id}", title = "Updated",
+            fields = { "title" }
+          }))
           return p.title
           """,
           otp_app: :ash_lua
@@ -147,7 +157,10 @@ defmodule AshLuaTest do
       {[published], _lua} =
         AshLua.eval!(
           """
-          local p = assert(posts.post.publish({ id = "#{post.id}" }))
+          local p = assert(posts.post.publish({
+            id = "#{post.id}",
+            fields = { "published" }
+          }))
           return p.published
           """,
           otp_app: :ash_lua
@@ -169,5 +182,4 @@ defmodule AshLuaTest do
       assert count == 4
     end
   end
-
 end

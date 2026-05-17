@@ -44,6 +44,7 @@ defmodule AshLua.MixProject do
     [
       main: "readme",
       source_ref: "v#{@version}",
+      logo: "logos/logo.svg",
       extra_section: "GUIDES",
       before_closing_head_tag: fn type ->
         if type == :html do
@@ -62,6 +63,8 @@ defmodule AshLua.MixProject do
       end,
       extras: [
         {"README.md", title: "Home"},
+        "documentation/tutorials/getting-started-with-ash-lua.md",
+        "documentation/topics/example-use-cases.md",
         "CHANGELOG.md"
       ],
       groups_for_extras: [
@@ -87,7 +90,7 @@ defmodule AshLua.MixProject do
         "Zach Daniel <zach@zachdaniel.dev>"
       ],
       licenses: ["MIT"],
-      files: ~w(lib .formatter.exs mix.exs README* LICENSE*
+      files: ~w(lib logos .formatter.exs mix.exs README* LICENSE*
       CHANGELOG* documentation usage-rules.md usage-rules),
       links: %{
         "GitHub" => @source_url,
@@ -146,8 +149,8 @@ defmodule AshLua.MixProject do
         "docs",
         "spark.replace_doc_links"
       ],
-      "spark.formatter": "spark.formatter --extensions AshLua",
-      "spark.cheat_sheets": "spark.cheat_sheets --extensions AshLua"
+      "spark.formatter": "spark.formatter --extensions AshLua.Domain,AshLua.Resource",
+      "spark.cheat_sheets": "spark.cheat_sheets --extensions AshLua.Domain,AshLua.Resource"
     ]
   end
 end

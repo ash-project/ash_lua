@@ -10,5 +10,7 @@ defmodule AshLua.Test.Posts do
 
   resources do
     resource AshLua.Test.Posts.Post
+    resource AshLua.Test.Posts.User
+    resource AshLua.Test.Posts.Comment
   end
 end

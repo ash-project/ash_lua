@@ -74,24 +74,31 @@ defmodule AshLua.Runtime do
     Lua.eval!(lua, script, script_opts)
   end
 
-  defp install_entrypoints(lua, %Manifest{entrypoints: entrypoints}) do
-    entrypoints
+  defp install_entrypoints(lua, %Manifest{} = manifest) do
+    manifest.entrypoints
     |> Enum.group_by(& &1.resource)
     |> Enum.reduce(lua, fn {resource, eps_for_resource}, lua ->
-      install_resource(lua, resource, eps_for_resource)
+      install_resource(lua, resource, eps_for_resource, manifest)
     end)
   end
 
-  defp install_resource(lua, resource, entrypoints) do
+  defp install_resource(lua, resource, entrypoints, manifest) do
     if AshLua.Resource.Info.expose?(resource) do
       domain = Ash.Resource.Info.domain(resource)
       domain_name = AshLua.Domain.Info.name(domain)
       resource_name = AshLua.Resource.Info.name(resource)
 
+      # Pre-seed `[domain, resource]` as an empty table so each deep
+      # `Lua.set!/3` for an action can walk through it. Without this,
+      # the second resource under a shared domain trips `invalid_index`
+      # because luerl halts traversal at the first existing prefix
+      # (`[domain]`) and then can't materialize the missing parent.
+      lua = Lua.set!(lua, [domain_name, resource_name], %{})
+
       Enum.reduce(entrypoints, lua, fn entrypoint, lua ->
         action_name = Atom.to_string(entrypoint.action.name)
         path = [domain_name, resource_name, action_name]
-        callback = build_action_callback(resource, entrypoint.action)
+        callback = build_action_callback(resource, entrypoint.action, manifest)
         Lua.set!(lua, path, callback)
       end)
     else
@@ -99,24 +106,146 @@ defmodule AshLua.Runtime do
     end
   end
 
-  defp build_action_callback(resource, action) do
+  defp build_action_callback(resource, action, manifest) do
     fn args, state ->
       input = decode_call_args(state, args)
       ash_opts = build_ash_opts(state)
+      {fields_input, input} = Map.pop(input, "fields")
+      {operation, input} = Map.pop(input, "operation")
 
-      case dispatch(resource, action, input, ash_opts) do
-        {:ok, result} ->
-          {encoded, state} = Lua.encode!(state, Encoder.encode_result(result))
-          {[encoded, nil], state}
+      cond do
+        is_nil(operation) ->
+          regular_call(resource, action, input, ash_opts, fields_input, manifest, state)
 
-        :ok ->
-          {[true, nil], state}
+        action.type == :read ->
+          operation_call(resource, action, input, ash_opts, operation, state)
 
-        {:error, error} ->
-          {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
+        true ->
+          err = {:operation_only_supported_on_list_operations, action.type}
+          {encoded, state} = Lua.encode!(state, encode_fields_error(err))
           {[nil, encoded], state}
       end
     end
+  end
+
+  defp regular_call(resource, action, input, ash_opts, fields_input, manifest, state) do
+    case AshLua.Fields.for_action(manifest, resource, action, fields_input) do
+      {:ok, {select, load, template}} ->
+        case dispatch(resource, action, input, ash_opts, select, load) do
+          {:ok, result} ->
+            {encoded, state} = Lua.encode!(state, Encoder.encode_with_template(result, template))
+            {[encoded, nil], state}
+
+          :ok ->
+            {[true, nil], state}
+
+          {:error, error} ->
+            {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
+            {[nil, encoded], state}
+        end
+
+      {:error, reason} ->
+        {encoded, state} = Lua.encode!(state, encode_fields_error(reason))
+        {[nil, encoded], state}
+    end
+  end
+
+  defp operation_call(resource, action, input, ash_opts, operation, state) do
+    case run_read_operation(resource, action, input, ash_opts, operation) do
+      {:ok, value} ->
+        {encoded, state} = Lua.encode!(state, Encoder.encode_result(value))
+        {[encoded, nil], state}
+
+      {:operation_error, reason} ->
+        {encoded, state} = Lua.encode!(state, encode_fields_error(reason))
+        {[nil, encoded], state}
+
+      {:error, error} ->
+        {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
+        {[nil, encoded], state}
+    end
+  end
+
+  defp run_read_operation(resource, action, input, opts, operation) do
+    {_page_opt, input} = pop_page_opt(input)
+    {filter, input} = Map.pop(input, "filter")
+    {sort, input} = Map.pop(input, "sort")
+    {limit, input} = Map.pop(input, "limit")
+    {offset, input} = Map.pop(input, "offset")
+
+    query =
+      resource
+      |> Ash.Query.for_read(action.name, input, opts)
+      |> maybe_filter_input(filter)
+      |> maybe_sort_input(sort)
+      |> maybe_limit(limit)
+      |> maybe_offset(offset)
+
+    perform_operation(query, resource, operation, opts)
+  end
+
+  defp perform_operation(query, _resource, "count", opts) do
+    query
+    |> Ash.Query.unset([:limit, :offset])
+    |> Ash.count(opts)
+  end
+
+  defp perform_operation(query, _resource, "exists", opts) do
+    Ash.exists(query, opts)
+  end
+
+  defp perform_operation(query, resource, [op, field_name], opts)
+       when op in ~w(count min max sum avg list first) and is_binary(field_name) do
+    with {:ok, field_atom} <- safe_field_atom(field_name),
+         {:ok, agg_kind} <- safe_op_atom(op),
+         {:ok, agg} <- build_aggregate(resource, agg_kind, field_atom) do
+      run_aggregate(query, agg, opts)
+    end
+  end
+
+  defp perform_operation(_query, _resource, other, _opts) do
+    {:operation_error, "invalid operation: #{inspect(other)}"}
+  end
+
+  defp safe_field_atom(name) do
+    {:ok, String.to_existing_atom(name)}
+  rescue
+    ArgumentError -> {:operation_error, "unknown field: #{inspect(name)}"}
+  end
+
+  defp safe_op_atom(name) do
+    {:ok, String.to_existing_atom(name)}
+  rescue
+    ArgumentError -> {:operation_error, "invalid operation kind: #{inspect(name)}"}
+  end
+
+  defp build_aggregate(resource, kind, field) do
+    {:ok, Ash.Query.Aggregate.new!(resource, :aggregate_result, kind, field: field)}
+  rescue
+    e -> {:operation_error, Exception.message(e)}
+  end
+
+  defp run_aggregate(query, aggregate, opts) do
+    case Ash.aggregate(query, aggregate, opts) do
+      {:ok, %{aggregate_result: value}} -> {:ok, value}
+      {:ok, value} -> {:ok, value}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp encode_fields_error(reason) do
+    %{
+      "message" => "invalid fields: #{inspect(reason)}",
+      "errors" => [
+        %{
+          "message" => inspect(reason),
+          "short_message" => "invalid_fields",
+          "code" => "invalid_fields",
+          "fields" => [],
+          "vars" => %{}
+        }
+      ]
+    }
   end
 
   defp decode_call_args(_state, []), do: %{}
@@ -130,7 +259,7 @@ defmodule AshLua.Runtime do
     end
   end
 
-  defp dispatch(resource, %{type: :read} = action, input, opts) do
+  defp dispatch(resource, %{type: :read} = action, input, opts, select, load) do
     {page_opt, input} = pop_page_opt(input)
     {filter, input} = Map.pop(input, "filter")
     {sort, input} = Map.pop(input, "sort")
@@ -140,6 +269,8 @@ defmodule AshLua.Runtime do
     query =
       resource
       |> Ash.Query.for_read(action.name, input, opts)
+      |> maybe_select(select)
+      |> maybe_load(load)
       |> maybe_filter_input(filter)
       |> maybe_sort_input(sort)
       |> maybe_limit(limit)
@@ -157,35 +288,67 @@ defmodule AshLua.Runtime do
     end
   end
 
-  defp dispatch(resource, %{type: :create} = action, input, opts) do
+  defp dispatch(resource, %{type: :create} = action, input, opts, select, load) do
     resource
     |> Ash.Changeset.for_create(action.name, input, opts)
+    |> changeset_select(select)
+    |> changeset_load(load)
     |> Ash.create(opts)
   end
 
-  defp dispatch(resource, %{type: :update} = action, input, opts) do
+  defp dispatch(resource, %{type: :update} = action, input, opts, select, load) do
     {filter, input} = split_primary_key_filter(resource, input)
+
+    bulk_extras =
+      []
+      |> append_if(select != [], {:select, select})
+      |> append_if(load_present?(load), {:load, load})
 
     resource
     |> pk_query(filter, opts)
-    |> Ash.bulk_update(action.name, input, bulk_opts(resource, opts))
+    |> Ash.bulk_update(action.name, input, bulk_opts(resource, opts) ++ bulk_extras)
     |> unwrap_bulk_result(filter, resource)
   end
 
-  defp dispatch(resource, %{type: :destroy} = action, input, opts) do
+  defp dispatch(resource, %{type: :destroy} = action, input, opts, select, load) do
     {filter, input} = split_primary_key_filter(resource, input)
+
+    bulk_extras =
+      []
+      |> append_if(select != [], {:select, select})
+      |> append_if(load_present?(load), {:load, load})
 
     resource
     |> pk_query(filter, opts)
-    |> Ash.bulk_destroy(action.name, input, bulk_opts(resource, opts))
+    |> Ash.bulk_destroy(action.name, input, bulk_opts(resource, opts) ++ bulk_extras)
     |> unwrap_bulk_result(filter, resource)
   end
 
-  defp dispatch(resource, %{type: :action} = action, input, opts) do
+  defp dispatch(resource, %{type: :action} = action, input, opts, _select, _load) do
     resource
     |> Ash.ActionInput.for_action(action.name, input, opts)
     |> Ash.run_action(opts)
   end
+
+  defp maybe_select(query, []), do: query
+  defp maybe_select(query, fields), do: Ash.Query.select(query, fields, replace?: true)
+
+  defp maybe_load(query, []), do: query
+  defp maybe_load(query, load), do: Ash.Query.load(query, load)
+
+  defp changeset_select(changeset, []), do: changeset
+
+  defp changeset_select(changeset, fields),
+    do: Ash.Changeset.select(changeset, fields, replace?: true)
+
+  defp changeset_load(changeset, []), do: changeset
+  defp changeset_load(changeset, load), do: Ash.Changeset.load(changeset, load)
+
+  defp load_present?([]), do: false
+  defp load_present?(_), do: true
+
+  defp append_if(list, false, _), do: list
+  defp append_if(list, true, item), do: list ++ [item]
 
   defp maybe_filter_input(query, nil), do: query
   defp maybe_filter_input(query, filter), do: Ash.Query.filter_input(query, filter)
@@ -199,7 +362,7 @@ defmodule AshLua.Runtime do
   defp maybe_offset(query, nil), do: query
   defp maybe_offset(query, offset), do: Ash.Query.offset(query, offset)
 
-  defp pop_page_opt(input) when is_map(input) do
+  defp pop_page_opt(input) do
     case Map.pop(input, "page") do
       {nil, rest} -> {nil, rest}
       {page, rest} when is_map(page) -> {Map.to_list(atomize_keys(page)), rest}
@@ -207,8 +370,6 @@ defmodule AshLua.Runtime do
       {_, rest} -> {nil, rest}
     end
   end
-
-  defp pop_page_opt(input), do: {nil, input}
 
   defp atomize_keys(map) when is_map(map) do
     Map.new(map, fn {k, v} -> {to_existing_atom(k), v} end)
@@ -219,7 +380,8 @@ defmodule AshLua.Runtime do
   defp to_existing_atom(k) when is_binary(k) do
     String.to_existing_atom(k)
   rescue
-    ArgumentError -> reraise(ArgumentError, "Unknown key #{inspect(k)} in page options", __STACKTRACE__)
+    ArgumentError ->
+      reraise(ArgumentError, "Unknown key #{inspect(k)} in page options", __STACKTRACE__)
   end
 
   defp split_primary_key_filter(resource, input) do
@@ -281,15 +443,19 @@ defmodule AshLua.Runtime do
     |> Keyword.merge(opts)
   end
 
-  defp unwrap_bulk_result(%Ash.BulkResult{status: :success, records: [record]}, _filter, _resource),
-    do: {:ok, record}
+  defp unwrap_bulk_result(
+         %Ash.BulkResult{status: :success, records: [record]},
+         _filter,
+         _resource
+       ),
+       do: {:ok, record}
 
   defp unwrap_bulk_result(%Ash.BulkResult{status: :success, records: []}, filter, resource) do
-    {:error,
-     Ash.Error.Query.NotFound.exception(primary_key: filter, resource: resource)}
+    {:error, Ash.Error.Query.NotFound.exception(primary_key: filter, resource: resource)}
   end
 
-  defp unwrap_bulk_result(%Ash.BulkResult{errors: errors}, _filter, _resource) when errors != [] do
+  defp unwrap_bulk_result(%Ash.BulkResult{errors: errors}, _filter, _resource)
+       when errors != [] do
     {:error, errors}
   end
 

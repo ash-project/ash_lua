@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-spark_locals_without_parens = []
+spark_locals_without_parens = [expose?: 1, name: 1]
 
 [
   inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"],

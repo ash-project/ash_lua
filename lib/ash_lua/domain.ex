@@ -25,7 +25,7 @@ defmodule AshLua.Domain do
   }
 
   @moduledoc """
-  Extension that exposes an Ash domain's resources to Lua scripts evaluated through `AshLua.eval/2`.
+  Extension that exposes an Ash domain's resources to Lua scripts evaluated through `AshLua.eval!/2`.
   """
 
   use Spark.Dsl.Extension, sections: [@lua]

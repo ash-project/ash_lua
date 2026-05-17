@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-import Config
-
-config :ash, policies: [show_policy_breakdowns?: true]
+defmodule AshLua.Test.Posts.Post.Status do
+  @moduledoc false
+  use Ash.Type.Enum, values: [:draft, :published, :archived]
+end

@@ -15,7 +15,6 @@ defprotocol AshLua.Error do
     * `:vars` — additional template/context variables interpolatable into `message`
 
   Errors without an impl fall through to an opaque "unknown error" entry in the encoder.
-  The shape mirrors `AshGraphql.Error` so consumers familiar with that surface should feel at home.
   """
   @fallback_to_any false
 

@@ -1,0 +1,316 @@
+# SPDX-FileCopyrightText: 2026 ash_lua contributors <https://github.com/ash-project/ash_lua/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
+defmodule AshLua.Runtime do
+  @moduledoc """
+  Builds a Lua VM with Ash action bindings derived from `Ash.Info.Manifest.generate/1` and
+  dispatches calls through to Ash with consistent actor / tenant / context plumbing.
+
+  ## Lua surface
+
+      local user, err = accounts.user.create({ name = "Zach" })
+      assert(accounts.todo.complete({ id = todo.id }))      -- raises on error
+
+  Action callables always return `(result, nil)` on success and `(nil, err_table)` on failure;
+  wrap a call in `assert()` for raise semantics.
+
+  Actor, tenant, and context are host-supplied via the eval opts and are never reflected to or
+  mutable from the script.
+  """
+
+  alias Ash.Info.Manifest
+  alias AshLua.Encoder
+
+  @private_key :ash_lua
+
+  @doc """
+  Builds a `%Lua{}` VM with Ash bindings installed.
+
+  ## Options
+
+    * `:otp_app` (required) — passed through to `Ash.Info.Manifest.generate/1`.
+    * `:actor`, `:tenant`, `:context` — host-supplied; merged into every Ash call.
+    * `:manifest` — pre-built `%Ash.Info.Manifest{}` (skips regeneration).
+    * `:lua` — pre-built `%Lua{}` to install bindings on. Defaults to `Lua.new/0`.
+  """
+  @spec build(keyword()) :: Lua.t()
+  def build(opts) do
+    opts = Keyword.validate!(opts, [:otp_app, :actor, :tenant, :context, :manifest, :lua])
+
+    manifest =
+      case Keyword.fetch(opts, :manifest) do
+        {:ok, %Manifest{} = m} ->
+          m
+
+        :error ->
+          otp_app = Keyword.fetch!(opts, :otp_app)
+          {:ok, m} = Manifest.generate(otp_app: otp_app)
+          m
+      end
+
+    lua = Keyword.get(opts, :lua) || Lua.new()
+
+    private = %{
+      actor: Keyword.get(opts, :actor),
+      tenant: Keyword.get(opts, :tenant),
+      context: Keyword.get(opts, :context, %{})
+    }
+
+    lua
+    |> Lua.put_private(@private_key, private)
+    |> install_entrypoints(manifest)
+  end
+
+  @doc """
+  Evaluates a Lua script string against a VM built from `opts`.
+
+  Returns `{results, lua}` like `Lua.eval!/2`.
+  """
+  @spec eval!(String.t(), keyword()) :: {list(), Lua.t()}
+  def eval!(script, opts) when is_binary(script) do
+    {script_opts, build_opts} = Keyword.split(opts, [:decode])
+    lua = build(build_opts)
+    Lua.eval!(lua, script, script_opts)
+  end
+
+  defp install_entrypoints(lua, %Manifest{entrypoints: entrypoints}) do
+    entrypoints
+    |> Enum.group_by(& &1.resource)
+    |> Enum.reduce(lua, fn {resource, eps_for_resource}, lua ->
+      install_resource(lua, resource, eps_for_resource)
+    end)
+  end
+
+  defp install_resource(lua, resource, entrypoints) do
+    if AshLua.Resource.Info.expose?(resource) do
+      domain = Ash.Resource.Info.domain(resource)
+      domain_name = AshLua.Domain.Info.name(domain)
+      resource_name = AshLua.Resource.Info.name(resource)
+
+      Enum.reduce(entrypoints, lua, fn entrypoint, lua ->
+        action_name = Atom.to_string(entrypoint.action.name)
+        path = [domain_name, resource_name, action_name]
+        callback = build_action_callback(resource, entrypoint.action)
+        Lua.set!(lua, path, callback)
+      end)
+    else
+      lua
+    end
+  end
+
+  defp build_action_callback(resource, action) do
+    fn args, state ->
+      input = decode_call_args(state, args)
+      ash_opts = build_ash_opts(state)
+
+      case dispatch(resource, action, input, ash_opts) do
+        {:ok, result} ->
+          {encoded, state} = Lua.encode!(state, Encoder.encode_result(result))
+          {[encoded, nil], state}
+
+        :ok ->
+          {[true, nil], state}
+
+        {:error, error} ->
+          {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
+          {[nil, encoded], state}
+      end
+    end
+  end
+
+  defp decode_call_args(_state, []), do: %{}
+
+  defp decode_call_args(state, [value | _]) do
+    decoded = Lua.decode!(state, value)
+
+    case Encoder.decode_input(decoded) do
+      map when is_map(map) -> map
+      _other -> %{}
+    end
+  end
+
+  defp dispatch(resource, %{type: :read} = action, input, opts) do
+    {page_opt, input} = pop_page_opt(input)
+    {filter, input} = Map.pop(input, "filter")
+    {sort, input} = Map.pop(input, "sort")
+    {limit, input} = Map.pop(input, "limit")
+    {offset, input} = Map.pop(input, "offset")
+
+    query =
+      resource
+      |> Ash.Query.for_read(action.name, input, opts)
+      |> maybe_filter_input(filter)
+      |> maybe_sort_input(sort)
+      |> maybe_limit(limit)
+      |> maybe_offset(offset)
+
+    cond do
+      action.get? ->
+        Ash.read_one(query, opts)
+
+      page_opt ->
+        Ash.read(query, Keyword.put(opts, :page, page_opt))
+
+      true ->
+        Ash.read(query, opts)
+    end
+  end
+
+  defp dispatch(resource, %{type: :create} = action, input, opts) do
+    resource
+    |> Ash.Changeset.for_create(action.name, input, opts)
+    |> Ash.create(opts)
+  end
+
+  defp dispatch(resource, %{type: :update} = action, input, opts) do
+    {filter, input} = split_primary_key_filter(resource, input)
+
+    resource
+    |> pk_query(filter, opts)
+    |> Ash.bulk_update(action.name, input, bulk_opts(resource, opts))
+    |> unwrap_bulk_result(filter, resource)
+  end
+
+  defp dispatch(resource, %{type: :destroy} = action, input, opts) do
+    {filter, input} = split_primary_key_filter(resource, input)
+
+    resource
+    |> pk_query(filter, opts)
+    |> Ash.bulk_destroy(action.name, input, bulk_opts(resource, opts))
+    |> unwrap_bulk_result(filter, resource)
+  end
+
+  defp dispatch(resource, %{type: :action} = action, input, opts) do
+    resource
+    |> Ash.ActionInput.for_action(action.name, input, opts)
+    |> Ash.run_action(opts)
+  end
+
+  defp maybe_filter_input(query, nil), do: query
+  defp maybe_filter_input(query, filter), do: Ash.Query.filter_input(query, filter)
+
+  defp maybe_sort_input(query, nil), do: query
+  defp maybe_sort_input(query, sort), do: Ash.Query.sort_input(query, sort)
+
+  defp maybe_limit(query, nil), do: query
+  defp maybe_limit(query, limit), do: Ash.Query.limit(query, limit)
+
+  defp maybe_offset(query, nil), do: query
+  defp maybe_offset(query, offset), do: Ash.Query.offset(query, offset)
+
+  defp pop_page_opt(input) when is_map(input) do
+    case Map.pop(input, "page") do
+      {nil, rest} -> {nil, rest}
+      {page, rest} when is_map(page) -> {Map.to_list(atomize_keys(page)), rest}
+      {page, rest} when is_list(page) -> {page, rest}
+      {_, rest} -> {nil, rest}
+    end
+  end
+
+  defp pop_page_opt(input), do: {nil, input}
+
+  defp atomize_keys(map) when is_map(map) do
+    Map.new(map, fn {k, v} -> {to_existing_atom(k), v} end)
+  end
+
+  defp to_existing_atom(k) when is_atom(k), do: k
+
+  defp to_existing_atom(k) when is_binary(k) do
+    String.to_existing_atom(k)
+  rescue
+    ArgumentError -> reraise(ArgumentError, "Unknown key #{inspect(k)} in page options", __STACKTRACE__)
+  end
+
+  defp split_primary_key_filter(resource, input) do
+    pk_fields = Ash.Resource.Info.primary_key(resource)
+    string_keys = Enum.map(pk_fields, &Atom.to_string/1)
+
+    filter =
+      pk_fields
+      |> Enum.zip(string_keys)
+      |> Enum.reduce(%{}, fn {atom_key, string_key}, acc ->
+        case fetch_either(input, atom_key, string_key) do
+          {:ok, value} -> Map.put(acc, atom_key, value)
+          :error -> acc
+        end
+      end)
+
+    remaining = Map.drop(input, string_keys ++ pk_fields)
+
+    {filter, remaining}
+  end
+
+  defp fetch_either(map, atom_key, string_key) do
+    cond do
+      Map.has_key?(map, string_key) -> {:ok, Map.fetch!(map, string_key)}
+      Map.has_key?(map, atom_key) -> {:ok, Map.fetch!(map, atom_key)}
+      true -> :error
+    end
+  end
+
+  defp pk_query(resource, filter, opts) do
+    resource
+    |> Ash.Query.new()
+    |> apply_query_opts(opts)
+    |> Ash.Query.do_filter(Map.to_list(filter))
+    |> Ash.Query.limit(1)
+  end
+
+  defp apply_query_opts(query, opts) do
+    query
+    |> maybe_set_tenant(opts[:tenant])
+    |> maybe_set_context(opts[:context])
+  end
+
+  defp maybe_set_tenant(query, nil), do: query
+  defp maybe_set_tenant(query, tenant), do: Ash.Query.set_tenant(query, tenant)
+
+  defp maybe_set_context(query, ctx) when is_nil(ctx) or ctx == %{}, do: query
+  defp maybe_set_context(query, ctx), do: Ash.Query.set_context(query, ctx)
+
+  defp bulk_opts(resource, opts) do
+    [
+      domain: Ash.Resource.Info.domain(resource),
+      return_records?: true,
+      return_errors?: true,
+      notify?: true,
+      strategy: [:atomic, :stream, :atomic_batches],
+      allow_stream_with: :full_read
+    ]
+    |> Keyword.merge(opts)
+  end
+
+  defp unwrap_bulk_result(%Ash.BulkResult{status: :success, records: [record]}, _filter, _resource),
+    do: {:ok, record}
+
+  defp unwrap_bulk_result(%Ash.BulkResult{status: :success, records: []}, filter, resource) do
+    {:error,
+     Ash.Error.Query.NotFound.exception(primary_key: filter, resource: resource)}
+  end
+
+  defp unwrap_bulk_result(%Ash.BulkResult{errors: errors}, _filter, _resource) when errors != [] do
+    {:error, errors}
+  end
+
+  defp unwrap_bulk_result(%Ash.BulkResult{} = result, _filter, _resource) do
+    {:error, result}
+  end
+
+  defp build_ash_opts(state) do
+    %{actor: actor, tenant: tenant, context: context} = get_private(state)
+
+    [actor: actor, tenant: tenant, context: context]
+    |> Enum.reject(fn
+      {:context, ctx} -> is_nil(ctx) or ctx == %{}
+      {_k, v} -> is_nil(v)
+    end)
+  end
+
+  defp get_private(%Lua{} = state) do
+    case Lua.get_private(state, @private_key) do
+      {:ok, value} -> value
+      :error -> %{actor: nil, tenant: nil, context: %{}}
+    end
+  end
+end

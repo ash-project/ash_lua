@@ -45,12 +45,6 @@ for a walkthrough.
 
 The current `0.1.x` line is functional but a few pieces are still missing.
 
-  * **Filter shape in docs.** Today, the `filter` reserved key on list
-    operations is documented as a generic table. The intent is to render the
-    filterable fields (and their operators) per record type, once
-    [`Ash.Info.Manifest`](https://hexdocs.pm/ash/Ash.Info.Manifest.html) exposes
-    that information. Until then, scripts pass filters that Ash understands and
-    the docs simply say "narrow the result set by field values".
   * **Configurable input/output naming.** Domain and resource names are
     overridable today via `lua do name "..." end`; field-level renames are
     planned.

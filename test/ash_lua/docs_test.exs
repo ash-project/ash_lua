@@ -51,7 +51,8 @@ defmodule AshLua.DocsTest do
       assert md =~ "a result and an error"
       assert md =~ "assert"
       assert md =~ "short_message"
-      assert md =~ "invalid_fields"
+      assert md =~ "unknown_field"
+      assert md =~ ~s/class  = "<invalid | forbidden | framework | unknown>"/
     end
 
     test "unknown topic returns {:error, :not_found}" do

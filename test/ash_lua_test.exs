@@ -37,7 +37,8 @@ defmodule AshLuaTest do
         )
 
       err_map = Map.new(err)
-      assert is_binary(err_map["message"])
+      assert err_map["class"] == "invalid"
+      refute Map.has_key?(err_map, "message")
 
       [first | _] = Enum.map(err_map["errors"], &Map.new(elem(&1, 1)))
 

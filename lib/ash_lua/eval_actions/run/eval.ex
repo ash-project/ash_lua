@@ -90,7 +90,7 @@ defmodule AshLua.EvalActions.Run.Eval do
 
   defp normalize_error_table(list) when is_list(list) do
     case AshLua.Encoder.decode_input(list) do
-      %{"message" => _} = err -> err
+      %{"class" => _, "errors" => _} = err -> err
       _ -> nil
     end
   end

@@ -34,7 +34,7 @@ defmodule AshLua.EvalActionsTest do
       assert {:ok, %{result: nil, error: err}} = Ash.run_action(input)
       assert is_map(err)
       err_map = Map.new(err)
-      assert is_binary(err_map["message"])
+      assert err_map["class"] in ["invalid", "forbidden", "framework", "unknown"]
     end
 
     test "wraps Lua function references as opaque markers so JSON encoding survives" do
@@ -117,8 +117,8 @@ defmodule AshLua.EvalActionsTest do
         })
 
       assert {:ok, %{result: nil, error: err}} = Ash.run_action(input)
-      refute err["message"] =~ "error object is a table"
-      assert err["message"] == "unknown field `totally_not_a_real_field`"
+      assert err["class"] == "invalid"
+      refute Map.has_key?(err, "message")
       assert [first | _] = err["errors"]
       first_map = if is_map(first), do: first, else: Map.new(first)
       assert first_map["code"] == "unknown_field"

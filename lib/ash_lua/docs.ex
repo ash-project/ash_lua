@@ -182,8 +182,8 @@ defmodule AshLua.Docs do
 
     ```lua
     {
-      message = "<top-level human-readable summary>",
-      errors  = {
+      class  = "<invalid | forbidden | framework | unknown>",
+      errors = {
         {
           message       = "<per-error message>",
           short_message = "<terse variant>",
@@ -196,9 +196,15 @@ defmodule AshLua.Docs do
     }
     ```
 
-    Stable `code` values include `required`, `invalid_attribute`,
+    The envelope's `class` is the kind of failure as a whole — `"invalid"`,
+    `"forbidden"`, `"framework"`, or `"unknown"`. The per-error detail lives
+    only in `errors`; there is no top-level message because picking one of the
+    leaf messages would silently misrepresent multi-error responses (typical
+    of validation failures with several field errors at once).
+
+    Stable per-error `code` values include `required`, `invalid_attribute`,
     `invalid_argument`, `invalid_query`, `not_found`, `forbidden`,
-    `forbidden_field`, `invalid_primary_key`, `invalid_fields`, and a fallback
+    `forbidden_field`, `invalid_primary_key`, `unknown_field`, and a fallback
     `unknown_error` (with a `vars.uuid` to look up in host logs).
 
     `fields` lists the field names this error pertains to and is useful for

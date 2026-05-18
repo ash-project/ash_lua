@@ -317,22 +317,29 @@ defmodule AshLua.Encoder do
   leaf through the `AshLua.Error` protocol. Leaves without a protocol impl render as an opaque
   "unknown error" entry with a uuid that's logged via `Logger.warning/1` so operators can
   correlate the surfaced uuid with full stacktrace details.
+
+  The envelope carries a `class` tag (`"invalid" | "forbidden" | "framework" | "unknown"`)
+  and the full per-error list in `errors`. Consumers that want a one-line summary should pick
+  the appropriate entry from `errors` themselves rather than read a top-level message — joining
+  or first-pick'ing here would silently mislead in the multi-error case.
   """
   @spec encode_error(term()) :: map()
   def encode_error(error) do
-    errors =
-      error
-      |> unwrap_errors()
-      |> Enum.map(&render_error/1)
-
     %{
-      "message" => top_message(errors),
-      "errors" => errors
+      "class" => error_class(error),
+      "errors" => error |> unwrap_errors() |> Enum.map(&render_error/1)
     }
   end
 
-  defp top_message([]), do: "unknown error"
-  defp top_message([%{"message" => msg} | _]), do: msg
+  # Ash actions return errors already wrapped in an error class struct, so
+  # we just read the wrapper. Bare `AshLua.Errors.FieldsError`s (from our
+  # own field-selection layer) are always input-shape — classify as invalid.
+  defp error_class(%Ash.Error.Invalid{}), do: "invalid"
+  defp error_class(%Ash.Error.Forbidden{}), do: "forbidden"
+  defp error_class(%Ash.Error.Framework{}), do: "framework"
+  defp error_class(%Ash.Error.Unknown{}), do: "unknown"
+  defp error_class(%AshLua.Errors.FieldsError{}), do: "invalid"
+  defp error_class(_), do: "unknown"
 
   defp unwrap_errors([]), do: []
 

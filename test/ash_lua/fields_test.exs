@@ -144,9 +144,11 @@ defmodule AshLua.FieldsTest do
         )
 
       err_map = Map.new(err)
-      assert err_map["message"] == "unknown field `nope`"
+      assert err_map["class"] == "invalid"
+      refute Map.has_key?(err_map, "message")
       first = err_map["errors"] |> List.first() |> elem(1)
       first_map = Map.new(first)
+      assert first_map["message"] == "unknown field `nope`"
       assert first_map["code"] == "unknown_field"
       assert Lua.Table.as_list(first_map["fields"]) == ["nope"]
     end
@@ -181,9 +183,11 @@ defmodule AshLua.FieldsTest do
         )
 
       err_map = Map.new(err)
-      assert err_map["message"] == "unknown argument `wrongarg` for calculation"
+      assert err_map["class"] == "invalid"
+      refute Map.has_key?(err_map, "message")
       first = err_map["errors"] |> List.first() |> elem(1)
       first_map = Map.new(first)
+      assert first_map["message"] == "unknown argument `wrongarg` for calculation"
       assert first_map["code"] == "unknown_calculation_arg"
       assert Lua.Table.as_list(first_map["fields"]) == ["wrongarg"]
     end
@@ -427,9 +431,10 @@ defmodule AshLua.FieldsTest do
         )
 
       err_map = Map.new(err)
-      assert err_map["message"] == "unknown operation `bogus`"
+      assert err_map["class"] == "invalid"
       first = err_map["errors"] |> List.first() |> elem(1)
       first_map = Map.new(first)
+      assert first_map["message"] == "unknown operation `bogus`"
       assert first_map["code"] == "unknown_operation"
     end
 
@@ -443,9 +448,10 @@ defmodule AshLua.FieldsTest do
         )
 
       err_map = Map.new(err)
-      assert err_map["message"] =~ "only supported on list operations"
+      assert err_map["class"] == "invalid"
       first = err_map["errors"] |> List.first() |> elem(1)
       first_map = Map.new(first)
+      assert first_map["message"] =~ "only supported on list operations"
       assert first_map["code"] == "operation_only_on_list_operations"
     end
   end

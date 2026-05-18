@@ -65,6 +65,7 @@ defmodule AshLua.MixProject do
         {"README.md", title: "Home"},
         "documentation/tutorials/getting-started-with-ash-lua.md",
         "documentation/topics/example-use-cases.md",
+        "documentation/how_to/integrate-with-ash-ai.md",
         "CHANGELOG.md"
       ],
       groups_for_extras: [
@@ -113,7 +114,7 @@ defmodule AshLua.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, ash_version("~> 3.5 and >= 3.5.13")},
+      {:ash, ash_version("~> 3.25")},
       {:lua, "~> 0.3"},
       {:jason, "~> 1.2"},
       {:igniter, "~> 0.6", optional: true},

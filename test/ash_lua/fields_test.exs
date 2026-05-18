@@ -337,6 +337,34 @@ defmodule AshLua.FieldsTest do
       assert sum == 15
     end
 
+    test "filter accepts long-form operator names (equals, not_equals, less_than, less_than_or_equal, greater_than, greater_than_or_equal)" do
+      {:ok, _} = Ash.create(Post, %{title: "apple"}, action: :create)
+      {:ok, _} = Ash.create(Post, %{title: "banana"}, action: :create)
+      {:ok, _} = Ash.create(Post, %{title: "cherry"}, action: :create)
+
+      for {expr, expected} <- [
+            {~s/{ equals = "banana" }/, 1},
+            {~s/{ not_equals = "banana" }/, 2},
+            {~s/{ less_than = "cherry" }/, 2},
+            {~s/{ less_than_or_equal = "cherry" }/, 3},
+            {~s/{ greater_than = "apple" }/, 2},
+            {~s/{ greater_than_or_equal = "apple" }/, 3}
+          ] do
+        {[count, _], _lua} =
+          AshLua.eval!(
+            """
+            return assert(posts.post.read({
+              filter = { title = #{expr} },
+              operation = "count"
+            }))
+            """,
+            otp_app: :ash_lua
+          )
+
+        assert count == expected, "expected #{expected} for filter title #{expr}, got #{count}"
+      end
+    end
+
     test "list over a field returns an array of values" do
       {:ok, post} = Ash.create(Post, %{title: "p"}, action: :create)
 

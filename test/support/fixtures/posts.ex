@@ -12,5 +12,7 @@ defmodule AshLua.Test.Posts do
     resource AshLua.Test.Posts.Post
     resource AshLua.Test.Posts.User
     resource AshLua.Test.Posts.Comment
+    resource AshLua.Test.Posts.MCPActions
+    resource AshLua.Test.Posts.CustomMCPActions
   end
 end

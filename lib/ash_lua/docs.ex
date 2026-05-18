@@ -14,7 +14,7 @@ defmodule AshLua.Docs do
   related records are described by cardinality and a link to the related record
   type's page.
 
-    * `topics/1` lists general topics of functionality, e.g. `"filtering"`,
+    * `topics/1` lists general topics of functionality, e.g. `"filters"`,
       `"pagination"`, `"error-handling"`; `topic_doc/2` renders one.
     * `list_callables/1` and `list_types/1` enumerate the documentable surface.
     * `callable_doc/2` renders one operation (e.g. `"posts.post.create"`).
@@ -28,12 +28,15 @@ defmodule AshLua.Docs do
   @type manifest_or_opts :: Manifest.t() | keyword()
 
   @topic_bodies %{
-    "filtering" => """
-    <a id="topic-filtering"></a>
-    # Filtering
+    "filters" => """
+    <a id="topic-filters"></a>
+    # Filters
 
     List operations (the ones described as `list`) accept a `filter` reserved
-    input key that narrows the result set:
+    input key that narrows the result set.
+
+    The simplest shape is a table of `<field> = <value>` pairs, all combined
+    with implicit AND:
 
     ```lua
     posts.post.read({
@@ -41,23 +44,65 @@ defmodule AshLua.Docs do
     })
     ```
 
-    Pass a table of `<field> = <value>` pairs to match by equality, or a table
-    of `<field> = { <operator> = <value> }` for comparisons:
+    For comparisons, use a sub-table keyed by operator or predicate-function
+    name:
 
     ```lua
     posts.post.read({
       filter = {
-        published = true,
         rating = { greater_than_or_equal = 4 },
-        title  = { ilike = "%hello%" }
+        title  = { contains = "hello" }
       }
     })
     ```
 
-    Operator keys you can use include `equals`, `not_equals`, `greater_than`,
-    `greater_than_or_equal`, `less_than`, `less_than_or_equal`, `in`,
-    `contains`, `ilike`, and `like`. Each operator is valid for the field
-    types that support it; see the record type's page for field types.
+    Operator and predicate-function names come from the record type's
+    **Filterable fields** section — each filterable field lists the operators
+    that apply to it and the value type each operator expects. All names are
+    plain Lua identifiers (`equals`, `not_equals`, `less_than`,
+    `less_than_or_equal`, `greater_than`, `greater_than_or_equal`, `in`,
+    `is_nil`, `contains`, `string_starts_with`, `string_ends_with`,
+    `is_distinct_from`, `is_not_distinct_from`, …).
+
+    ## Boolean combinators
+
+    Three reserved keys combine sub-filters:
+
+      * `and` — every sub-filter must match (also the implicit behaviour at the
+        top level when listing multiple fields).
+      * `or` — any sub-filter must match.
+      * `not` — the sub-filter must not match.
+
+    These are Lua reserved words, so write them as bracketed string keys:
+
+    ```lua
+    posts.post.read({
+      filter = {
+        ["and"] = {
+          { published = true },
+          { rating    = { greater_than_or_equal = 4 } }
+        }
+      }
+    })
+
+    posts.post.read({
+      filter = {
+        ["or"] = {
+          { author_id = me },
+          { author_id = friend_id }
+        }
+      }
+    })
+
+    posts.post.read({
+      filter = {
+        ["not"] = { published = true }
+      }
+    })
+    ```
+
+    `and` and `or` take an array of sub-filter tables; `not` takes a single
+    sub-filter table. Combinators nest freely.
 
     `filter` is only honored on list operations. Reads of a single record by
     primary key (i.e. `get` operations and `update`/`delete` inputs) do not
@@ -167,6 +212,12 @@ defmodule AshLua.Docs do
 
   @topic_ids @topic_bodies |> Map.keys() |> Enum.sort()
 
+  @topic_titles %{
+    "filters" => "Filters",
+    "pagination" => "Pagination",
+    "error-handling" => "Error handling"
+  }
+
   @doc """
   Returns the dotted callable paths (e.g. `"posts.post.create"`) exposed to Lua,
   in stable sorted order.
@@ -224,6 +275,31 @@ defmodule AshLua.Docs do
   def topic_doc(_opts, _id), do: {:error, :not_found}
 
   @doc """
+  Searches the documentable surface for entries matching `term`.
+
+  Returns markdown — a header plus a bulleted list of matching callables,
+  record types, named types, and topics, ranked by relevance. The list is
+  intended as a discovery aid: the LLM (or human) picks one name and follows
+  up with `callable_doc/2` / `type_doc/2` / `topic_doc/2` for the full page.
+
+  An empty / blank term returns an empty result page. The match limit is 20.
+  """
+  @spec search(manifest_or_opts(), String.t()) :: String.t()
+  def search(manifest_or_opts, term) when is_binary(term) do
+    manifest = ensure_manifest(manifest_or_opts)
+    needle = term |> String.trim() |> String.downcase()
+
+    if needle == "" do
+      "# Search results\n\n_Please provide a search term._"
+    else
+      manifest
+      |> collect_search_candidates()
+      |> filter_and_rank(needle)
+      |> render_search_results(term)
+    end
+  end
+
+  @doc """
   Renders the markdown for one operation, addressed by its dotted path.
 
   Returns `{:ok, markdown}` or `{:error, :not_found}`.
@@ -257,6 +333,8 @@ defmodule AshLua.Docs do
     resource_lookup = Manifest.resource_lookup(manifest)
     type_lookup = Manifest.type_lookup(manifest)
 
+    op_display_map = build_op_display_map(manifest)
+
     cond do
       is_atom(identifier) and Map.has_key?(type_lookup, identifier) ->
         {:ok,
@@ -264,12 +342,15 @@ defmodule AshLua.Docs do
 
       is_atom(identifier) and Map.has_key?(resource_lookup, identifier) ->
         resource = Map.fetch!(resource_lookup, identifier)
-        {:ok, render_record_type(resource, resource_lookup, type_lookup)}
+        {:ok, render_record_type(resource, resource_lookup, type_lookup, op_display_map)}
 
       is_binary(identifier) and String.contains?(identifier, ".") ->
         case find_resource_by_path(manifest, identifier) do
-          {:ok, resource} -> {:ok, render_record_type(resource, resource_lookup, type_lookup)}
-          :error -> {:error, :not_found}
+          {:ok, resource} ->
+            {:ok, render_record_type(resource, resource_lookup, type_lookup, op_display_map)}
+
+          :error ->
+            {:error, :not_found}
         end
 
       is_binary(identifier) ->
@@ -656,7 +737,12 @@ defmodule AshLua.Docs do
     type_link(t, resource_lookup, type_lookup)
   end
 
-  defp render_record_type(%Manifest.Resource{} = resource, resource_lookup, type_lookup) do
+  defp render_record_type(
+         %Manifest.Resource{} = resource,
+         resource_lookup,
+         type_lookup,
+         op_display_map
+       ) do
     path = resource_path(resource.module)
     anchor = path_anchor(path)
 
@@ -699,13 +785,152 @@ defmodule AshLua.Docs do
             rows
       end
 
+    filterable_section =
+      filterable_fields_section(resource, resource_lookup, type_lookup, op_display_map)
+
+    sortable_section = sortable_fields_section(resource)
+
     """
     <a id="#{anchor}"></a>
     # Record type `#{path}`#{description}
 
-    #{primary_key_line}#{fields_section}#{rels_section}
+    #{primary_key_line}#{fields_section}#{rels_section}#{filterable_section}#{sortable_section}
     """
     |> String.trim()
+  end
+
+  defp filterable_fields_section(resource, resource_lookup, type_lookup, op_display_map) do
+    filterable =
+      resource
+      |> Manifest.Resource.all_fields()
+      |> Enum.filter(& &1.filterable?)
+
+    case filterable do
+      [] ->
+        ""
+
+      fields ->
+        body =
+          Enum.map_join(fields, "\n\n", fn field ->
+            field_filter_block(field, resource_lookup, type_lookup, op_display_map)
+          end)
+
+        "\n\n## Filterable fields\n\nThe `filter` reserved input on list operations accepts these per-field forms. See the **Filters** topic for the overall expression shape, including boolean combinators.\n\n" <>
+          body
+    end
+  end
+
+  defp field_filter_block(%Manifest.Field{} = field, resource_lookup, type_lookup, op_display_map) do
+    operators = field.filter_operators || []
+    functions = field.filter_functions || []
+    custom_exprs = field.filter_custom_expressions || []
+
+    header = "### `#{field.name}` (#{type_link(field.type, resource_lookup, type_lookup)})"
+
+    lines =
+      Enum.map(
+        operators,
+        &applicable_line(&1, field.type, resource_lookup, type_lookup, op_display_map)
+      ) ++
+        Enum.map(
+          functions,
+          &applicable_line(&1, field.type, resource_lookup, type_lookup, op_display_map)
+        ) ++
+        Enum.map(
+          custom_exprs,
+          &applicable_line(&1, field.type, resource_lookup, type_lookup, op_display_map)
+        )
+
+    case lines do
+      [] -> header <> "\n\n  - _no operators applicable_"
+      _ -> header <> "\n\n" <> Enum.map_join(lines, "\n", &("  - " <> &1))
+    end
+  end
+
+  defp applicable_line(
+         %{name: name, rhs: rhs},
+         field_type,
+         resource_lookup,
+         type_lookup,
+         op_display_map
+       ) do
+    "`#{display_op_name(name, op_display_map)}` — value: " <>
+      render_rhs(rhs, field_type, resource_lookup, type_lookup)
+  end
+
+  defp render_rhs(:same, field_type, resource_lookup, type_lookup) do
+    type_link(field_type, resource_lookup, type_lookup)
+  end
+
+  defp render_rhs(:any, _field_type, _rl, _tl), do: "any"
+
+  defp render_rhs({:array, inner}, field_type, rl, tl) do
+    "list of " <> render_rhs(inner, field_type, rl, tl)
+  end
+
+  defp render_rhs({:concrete, atom}, _field_type, resource_lookup, type_lookup)
+       when is_atom(atom) do
+    cond do
+      Map.has_key?(type_lookup, atom) ->
+        type = Map.fetch!(type_lookup, atom)
+        "[`#{type.name}`](##{name_anchor(type.name)})"
+
+      Map.has_key?(resource_lookup, atom) ->
+        record_link(atom, resource_lookup)
+
+      module_atom?(atom) ->
+        "`" <> AshLua.Type.type_name(atom) <> "`"
+
+      true ->
+        "`#{atom}`"
+    end
+  end
+
+  defp render_rhs(other, _field_type, _rl, _tl), do: "`#{inspect(other)}`"
+
+  defp module_atom?(atom) when is_atom(atom) do
+    atom |> Atom.to_string() |> String.starts_with?("Elixir.")
+  end
+
+  defp build_op_display_map(%Manifest{filter_capabilities: nil}), do: %{}
+
+  defp build_op_display_map(%Manifest{filter_capabilities: %Manifest.FilterCapabilities{} = caps}) do
+    Map.new(caps.operators, fn op ->
+      candidates = Enum.filter([op.name | op.aliases || []], &valid_lua_identifier?/1)
+
+      chosen =
+        case candidates do
+          [] -> op.name
+          list -> Enum.min_by(list, &(&1 |> Atom.to_string() |> byte_size()))
+        end
+
+      {op.name, chosen}
+    end)
+  end
+
+  defp valid_lua_identifier?(name) when is_atom(name) do
+    name |> Atom.to_string() |> String.match?(~r/^[A-Za-z_][A-Za-z0-9_]*$/)
+  end
+
+  defp display_op_name(name, op_display_map) when is_atom(name) do
+    Map.get(op_display_map, name, name)
+  end
+
+  defp sortable_fields_section(resource) do
+    sortable =
+      resource
+      |> Manifest.Resource.all_fields()
+      |> Enum.filter(& &1.sortable?)
+      |> Enum.map(& &1.name)
+
+    case sortable do
+      [] ->
+        ""
+
+      names ->
+        "\n\n## Sortable fields\n\nThe `sort` reserved input on list operations accepts these field names (prefix with `-` for descending).\n\n" <>
+          Enum.map_join(names, "\n", &"  - `#{&1}`")
+    end
   end
 
   defp render_named_type(%Manifest.Type{} = type, resource_lookup, type_lookup) do
@@ -855,5 +1080,108 @@ defmodule AshLua.Docs do
     |> to_string()
     |> String.downcase()
     |> String.replace(~r/[^a-z0-9]+/, "-")
+  end
+
+  # ── search helpers ──────────────────────────────────────────────────────────
+
+  defp collect_search_candidates(manifest) do
+    callables =
+      manifest.entrypoints
+      |> Enum.flat_map(fn entrypoint ->
+        if AshLua.Resource.Info.expose?(entrypoint.resource) do
+          [callable_candidate(entrypoint)]
+        else
+          []
+        end
+      end)
+
+    record_types =
+      manifest.resources
+      |> Enum.flat_map(fn %Manifest.Resource{module: module} = resource ->
+        if AshLua.Resource.Info.expose?(module) do
+          [record_type_candidate(resource)]
+        else
+          []
+        end
+      end)
+
+    named_types = Enum.map(manifest.types, &named_type_candidate/1)
+    topics = Enum.map(@topic_ids, &topic_candidate/1)
+
+    callables ++ record_types ++ named_types ++ topics
+  end
+
+  defp callable_candidate(%Manifest.Entrypoint{} = entrypoint) do
+    %{
+      id: resource_path(entrypoint.resource) <> "." <> Atom.to_string(entrypoint.action.name),
+      kind: "operation",
+      summary: callable_summary(entrypoint)
+    }
+  end
+
+  defp callable_summary(%Manifest.Entrypoint{action: action, resource: resource}) do
+    case action.description do
+      nil -> "#{operation_kind(action)} operation on `#{resource_path(resource)}`"
+      "" -> "#{operation_kind(action)} operation on `#{resource_path(resource)}`"
+      desc -> desc
+    end
+  end
+
+  defp record_type_candidate(%Manifest.Resource{} = resource) do
+    %{
+      id: resource_path(resource.module),
+      kind: "record type",
+      summary: record_type_candidate_summary(resource)
+    }
+  end
+
+  defp record_type_candidate_summary(%Manifest.Resource{description: d})
+       when is_binary(d) and d != "",
+       do: d
+
+  defp record_type_candidate_summary(_), do: "record type"
+
+  defp named_type_candidate(%Manifest.Type{name: name, kind: kind}) do
+    %{id: name, kind: "type (#{kind})", summary: "named #{kind} type"}
+  end
+
+  defp topic_candidate(id) do
+    %{id: id, kind: "topic", summary: Map.get(@topic_titles, id, id)}
+  end
+
+  defp filter_and_rank(candidates, needle) do
+    candidates
+    |> Enum.map(fn cand -> {cand, score_candidate(cand, needle)} end)
+    |> Enum.filter(fn {_cand, score} -> score > 0 end)
+    |> Enum.sort_by(fn {_cand, score} -> -score end)
+    |> Enum.take(20)
+    |> Enum.map(fn {cand, _score} -> cand end)
+  end
+
+  defp score_candidate(%{id: id, summary: summary}, needle) do
+    id_l = String.downcase(id)
+    sum_l = summary |> to_string() |> String.downcase()
+
+    cond do
+      id_l == needle -> 1000
+      String.starts_with?(id_l, needle) -> 800
+      String.contains?(id_l, needle) -> 500
+      String.contains?(sum_l, needle) -> 100
+      true -> 0
+    end
+  end
+
+  defp render_search_results([], term) do
+    "# Search results for `#{term}`\n\n_No matches._\n\n" <>
+      "Use `name` instead of `search` to fetch a known doc by exact id."
+  end
+
+  defp render_search_results(matches, term) do
+    bullets =
+      Enum.map_join(matches, "\n", fn %{id: id, kind: kind, summary: summary} ->
+        "- `#{id}` (#{kind}) — #{summary}"
+      end)
+
+    "# Search results for `#{term}`\n\n#{bullets}\n\n_#{length(matches)} result#{if length(matches) == 1, do: "", else: "s"}._"
   end
 end

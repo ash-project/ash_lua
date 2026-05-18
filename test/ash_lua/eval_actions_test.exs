@@ -1,0 +1,172 @@
+# SPDX-FileCopyrightText: 2026 ash_lua contributors <https://github.com/ash-project/ash_lua/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
+defmodule AshLua.EvalActionsTest do
+  use ExUnit.Case, async: false
+
+  alias AshLua.Test.Posts.MCPActions
+  alias AshLua.Test.Posts.Post
+
+  describe "synthesized :eval action" do
+    test "runs a Lua script against the scoped Lua surface" do
+      {:ok, _} = Ash.create(Post, %{title: "Hello"}, action: :create)
+
+      input =
+        Ash.ActionInput.for_action(MCPActions, :eval, %{
+          script: """
+          local records = assert(posts.post.read({ fields = { "title" } }))
+          return records[1].title
+          """
+        })
+
+      assert {:ok, %{result: "Hello", error: nil}} = Ash.run_action(input)
+    end
+
+    test "captures a Lua-side (nil, err) into the structured response" do
+      input =
+        Ash.ActionInput.for_action(MCPActions, :eval, %{
+          script: """
+          return posts.post.create({ body = "missing title" })
+          """
+        })
+
+      assert {:ok, %{result: nil, error: err}} = Ash.run_action(input)
+      assert is_map(err)
+      err_map = Map.new(err)
+      assert is_binary(err_map["message"])
+    end
+
+    test "captures a Lua syntax error as a structured response" do
+      input =
+        Ash.ActionInput.for_action(MCPActions, :eval, %{
+          script: """
+          this is not valid lua;
+          """
+        })
+
+      assert {:ok, %{result: nil, error: err}} = Ash.run_action(input)
+      assert [%{"code" => "lua_error"} | _] = err["errors"]
+    end
+
+    test "scopes the surface — actions outside `eval_actions` are not callable" do
+      # MCPActions exposes Post[:read, :create] and Comment[:read]. Try to call
+      # a write action on Comment that wasn't listed.
+      input =
+        Ash.ActionInput.for_action(MCPActions, :eval, %{
+          script: """
+          local _, err = posts.comment.create({ body = "x" })
+          return err == nil
+          """
+        })
+
+      # `create` isn't exposed on Comment → the call itself raises in Lua
+      # because `posts.comment.create` doesn't exist as a callable. That
+      # surfaces as a Lua runtime error captured into the err field.
+      {:ok, %{result: result, error: error}} = Ash.run_action(input)
+
+      assert result == nil or result == false
+      assert is_nil(result) or is_map(error)
+    end
+  end
+
+  describe "synthesized :docs action" do
+    test "with no name returns the full scoped markdown page" do
+      input = Ash.ActionInput.for_action(MCPActions, :docs, %{})
+
+      assert {:ok, md} = Ash.run_action(input)
+      assert md =~ "# API reference"
+      assert md =~ "# `posts.post.read`"
+      assert md =~ "# `posts.post.create`"
+      assert md =~ "# `posts.comment.read`"
+      # Out-of-scope actions are not in the docs.
+      refute md =~ "# `posts.comment.create`"
+      refute md =~ "# `posts.user.read`"
+    end
+
+    test "with a callable name returns just that page" do
+      input = Ash.ActionInput.for_action(MCPActions, :docs, %{name: "posts.post.read"})
+
+      assert {:ok, md} = Ash.run_action(input)
+      assert md =~ "# `posts.post.read`"
+      assert md =~ "**Operation:** `list`"
+    end
+
+    test "with a record type name returns the type page" do
+      input = Ash.ActionInput.for_action(MCPActions, :docs, %{name: "posts.post"})
+
+      assert {:ok, md} = Ash.run_action(input)
+      assert md =~ "# Record type `posts.post`"
+    end
+
+    test "with a topic id returns the topic page" do
+      input = Ash.ActionInput.for_action(MCPActions, :docs, %{name: "filters"})
+
+      assert {:ok, md} = Ash.run_action(input)
+      assert md =~ "# Filters"
+    end
+
+    test "with an unknown name returns an invalid_argument error" do
+      input = Ash.ActionInput.for_action(MCPActions, :docs, %{name: "nope.does.not.exist"})
+
+      assert {:error, %Ash.Error.Invalid{errors: [err | _]}} = Ash.run_action(input)
+      assert err.field == :name
+    end
+
+    test "with `search` set returns ranked matches over the scoped surface" do
+      input = Ash.ActionInput.for_action(MCPActions, :docs, %{search: "post"})
+
+      assert {:ok, md} = Ash.run_action(input)
+      assert md =~ "# Search results for `post`"
+      assert md =~ "`posts.post.read`"
+      assert md =~ "`posts.post.create`"
+      # `posts.user.read` is out of scope on MCPActions — search must respect it.
+      refute md =~ "`posts.user.read`"
+    end
+
+    test "search with no matches returns the no-matches blurb" do
+      input = Ash.ActionInput.for_action(MCPActions, :docs, %{search: "totally-not-a-thing"})
+
+      assert {:ok, md} = Ash.run_action(input)
+      assert md =~ "_No matches._"
+    end
+
+    test "passing both `name` and `search` is an error" do
+      input =
+        Ash.ActionInput.for_action(MCPActions, :docs, %{
+          name: "posts.post.read",
+          search: "post"
+        })
+
+      assert {:error, %Ash.Error.Invalid{errors: [err | _]}} = Ash.run_action(input)
+      assert err.field == :search
+    end
+  end
+
+  describe "custom eval_action_name / docs_action_name" do
+    alias AshLua.Test.Posts.CustomMCPActions
+
+    test "exposes the actions under the configured names" do
+      action_names =
+        CustomMCPActions
+        |> Ash.Resource.Info.actions()
+        |> Enum.map(& &1.name)
+
+      assert :run in action_names
+      assert :describe in action_names
+      refute :eval in action_names
+      refute :docs in action_names
+    end
+
+    test "the renamed eval action behaves like :eval" do
+      input = Ash.ActionInput.for_action(CustomMCPActions, :run, %{script: "return 42"})
+      assert {:ok, %{result: 42, error: nil}} = Ash.run_action(input)
+    end
+
+    test "the renamed docs action behaves like :docs" do
+      input = Ash.ActionInput.for_action(CustomMCPActions, :describe, %{})
+      assert {:ok, md} = Ash.run_action(input)
+      assert md =~ "# API reference"
+    end
+  end
+end

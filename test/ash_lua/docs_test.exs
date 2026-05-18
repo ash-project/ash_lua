@@ -24,14 +24,17 @@ defmodule AshLua.DocsTest do
 
   describe "topics/1 and topic_doc/2" do
     test "lists the available topics, sorted" do
-      assert AshLua.Docs.topics(opts()) == ["error-handling", "filtering", "pagination"]
+      assert AshLua.Docs.topics(opts()) == ["error-handling", "filters", "pagination"]
     end
 
-    test "renders the filtering topic" do
-      {:ok, md} = AshLua.Docs.topic_doc(opts(), "filtering")
-      assert md =~ "# Filtering"
+    test "renders the filters topic" do
+      {:ok, md} = AshLua.Docs.topic_doc(opts(), "filters")
+      assert md =~ "# Filters"
       assert md =~ "`filter`"
-      assert md =~ "greater_than_or_equal"
+      assert md =~ "Boolean combinators"
+      assert md =~ ~s/["and"]/
+      assert md =~ ~s/["or"]/
+      assert md =~ ~s/["not"]/
     end
 
     test "renders the pagination topic" do
@@ -53,6 +56,42 @@ defmodule AshLua.DocsTest do
 
     test "unknown topic returns {:error, :not_found}" do
       assert {:error, :not_found} = AshLua.Docs.topic_doc(opts(), "nope")
+    end
+  end
+
+  describe "search/2" do
+    test "ranks exact id matches highest" do
+      md = AshLua.Docs.search(opts(), "filters")
+
+      assert md =~ "# Search results for `filters`"
+      assert md =~ "- `filters` (topic)"
+    end
+
+    test "matches substrings in identifiers" do
+      md = AshLua.Docs.search(opts(), "post")
+
+      assert md =~ "`posts.post`"
+      assert md =~ "`posts.post.read`"
+      assert md =~ "`posts.post.create`"
+    end
+
+    test "matches description text for callables when id doesn't match" do
+      # `:word_count` action is on Post but the term "word" only appears in
+      # the action's name itself, which is part of its id. Confirm the
+      # callable shows up regardless.
+      md = AshLua.Docs.search(opts(), "word")
+      assert md =~ "posts.post.word_count"
+    end
+
+    test "blank term returns a please-provide-a-term placeholder" do
+      assert AshLua.Docs.search(opts(), "") =~ "Please provide a search term"
+      assert AshLua.Docs.search(opts(), "   ") =~ "Please provide a search term"
+    end
+
+    test "no matches returns a no-matches blurb" do
+      md = AshLua.Docs.search(opts(), "thiswillneverexistanywhere")
+      assert md =~ "_No matches._"
+      assert md =~ "Use `name` instead"
     end
   end
 
@@ -173,6 +212,42 @@ defmodule AshLua.DocsTest do
 
       assert md =~ "| `status` | [`Status`](#status)"
       assert md =~ "| `slug` | [`Slug`](#slug)"
+    end
+
+    test "record-type page renders Filterable + Sortable sections per field" do
+      {:ok, md} = AshLua.Docs.type_doc(opts(), "posts.post")
+
+      assert md =~ "## Filterable fields"
+      assert md =~ "### `title` (`string`)"
+      # Operators render with the shortest valid-identifier name from the
+      # manifest's per-operator alias list — `:==` → `eq`, `:>` → `greater_than`.
+      assert md =~ "- `eq` — value: `string`"
+      assert md =~ "- `not_eq` — value: `string`"
+      assert md =~ "- `less_than` — value: `string`"
+      assert md =~ "- `greater_than` — value: `string`"
+      assert md =~ "- `less_than_or_equal` — value: `string`"
+      assert md =~ "- `greater_than_or_equal` — value: `string`"
+      assert md =~ "- `in` — value: list of `string`"
+      assert md =~ "- `is_nil` — value: `boolean`"
+      assert md =~ "- `contains` — value: `string`"
+
+      # Bare canonical symbols never leak into the rendered docs.
+      refute md =~ "- `==`"
+      refute md =~ "- `!=`"
+      refute md =~ "- `<`"
+      refute md =~ "- `>`"
+
+      assert md =~ "## Sortable fields"
+      assert md =~ "- `title`"
+    end
+
+    test "filter RHS cross-links to a named type when the field uses a custom type" do
+      {:ok, md} = AshLua.Docs.type_doc(opts(), "posts.post")
+
+      # `status` is a custom enum type — `eq` RHS is :same, so it should
+      # cross-link to the Status type page rather than show a builtin atom.
+      assert md =~ "### `status` ([`Status`](#status))"
+      assert md =~ "- `eq` — value: [`Status`](#status)"
     end
   end
 

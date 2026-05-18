@@ -214,6 +214,33 @@ defmodule AshLua.DocsTest do
       assert md =~ "| `slug` | [`Slug`](#slug)"
     end
 
+    test "embedded resource renders as a named type, addressable by short name" do
+      types = AshLua.Docs.list_types(opts())
+      assert "ScheduleConfig" in types
+
+      {:ok, md} = AshLua.Docs.type_doc(opts(), "ScheduleConfig")
+      assert md =~ "# Embedded type `ScheduleConfig`"
+      assert md =~ "| `cadence` |"
+      assert md =~ "| `hour` |"
+
+      # Embedded resources have no domain, so they must not show up as
+      # path-addressable record types.
+      refute md =~ "**Primary key:**"
+      refute md =~ "## Filterable fields"
+      refute md =~ "## Related records"
+    end
+
+    test "fields whose type is an embedded resource cross-link to the embedded type page" do
+      {:ok, md} = AshLua.Docs.type_doc(opts(), "posts.post")
+      assert md =~ "| `schedule_config` | [`ScheduleConfig`](#scheduleconfig) |"
+    end
+
+    test "full_doc/1 does not crash on embedded resources" do
+      md = AshLua.Docs.full_doc(opts())
+      assert is_binary(md)
+      assert md =~ "# Embedded type `ScheduleConfig`"
+    end
+
     test "record-type page renders Filterable + Sortable sections per field" do
       {:ok, md} = AshLua.Docs.type_doc(opts(), "posts.post")
 

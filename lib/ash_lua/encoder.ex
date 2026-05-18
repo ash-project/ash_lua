@@ -107,6 +107,30 @@ defmodule AshLua.Encoder do
     Enum.map(value, &encode_result/1)
   end
 
+  # Luerl reference records — Lua functions / userdata / raw table refs that
+  # decoding leaves in place because there's no Elixir equivalent. They reach
+  # us when a script returns a table containing methods (e.g. `return loop.item`)
+  # or returns a function directly (e.g. `return print`). Render them as an
+  # opaque marker so the consumer knows the slot is non-data, instead of
+  # crashing Jason downstream.
+  def encode_result({:funref, _, _}), do: %{"opaque" => "function"}
+  def encode_result({:erl_func, _}), do: %{"opaque" => "function"}
+  def encode_result({:erl_mfa, _, _, _}), do: %{"opaque" => "function"}
+  def encode_result({:tref, _}), do: %{"opaque" => "table_reference"}
+  def encode_result({:usdref, _}), do: %{"opaque" => "userdata"}
+
+  # Any other Erlang tuple shouldn't normally appear in a Lua-decoded result,
+  # but the eval action's `:term` slot can carry one when an Ash action
+  # returns a tuple (e.g. a `:tuple`-typed attribute that bypassed the
+  # template path). Wrap it as a self-describing map so Jason doesn't crash;
+  # an unexpected wrap is also a useful signal that something leaked.
+  def encode_result(value) when is_tuple(value) do
+    %{
+      "type" => "tuple",
+      "values" => value |> Tuple.to_list() |> Enum.map(&encode_result/1)
+    }
+  end
+
   def encode_result(%_struct{} = record) do
     record
     |> Map.from_struct()

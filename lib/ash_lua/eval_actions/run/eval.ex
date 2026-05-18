@@ -44,7 +44,11 @@ defmodule AshLua.EvalActions.Run.Eval do
     try do
       {values, _lua} = AshLua.eval!(script, eval_opts)
       {result, error} = split_lua_return(values)
-      {:ok, %{result: result, error: error}}
+      # Pass the script's return value through the encoder so any Luerl
+      # reference records (function/userdata/table refs from e.g. `return
+      # loop.item`) become opaque markers rather than crashing Jason in the
+      # downstream MCP serializer.
+      {:ok, %{result: AshLua.Encoder.encode_result(result), error: error}}
     rescue
       e in [Lua.CompilerException, Lua.RuntimeException] ->
         {:ok, %{result: nil, error: format_lua_error(e)}}

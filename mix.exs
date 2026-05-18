@@ -114,7 +114,7 @@ defmodule AshLua.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, ash_version("~> 3.25 and >= 3.25.1")},
+      {:ash, ash_version("~> 3.25 and >= 3.25.2")},
       {:lua, "~> 0.3"},
       {:jason, "~> 1.2"},
       {:igniter, "~> 0.6", optional: true},

@@ -61,6 +61,10 @@ defmodule AshLua.Test.Posts.Post do
       public? true
     end
 
+    attribute :schedule_config, AshLua.Test.Posts.ScheduleConfig do
+      public? true
+    end
+
     attribute :metadata, :map do
       public? true
 

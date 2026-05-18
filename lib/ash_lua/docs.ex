@@ -890,6 +890,38 @@ defmodule AshLua.Docs do
     end
   end
 
+  defp render_named_type(
+         %Manifest.Type{kind: :embedded_resource, resource: %Manifest.Resource{} = resource},
+         resource_lookup,
+         type_lookup
+       ) do
+    anchor = name_anchor(resource.name)
+    header = "<a id=\"#{anchor}\"></a>\n# Embedded type `#{resource.name}`"
+
+    description =
+      case resource.description do
+        nil -> ""
+        "" -> ""
+        d -> "\n\n" <> d
+      end
+
+    fields_section =
+      case Manifest.Resource.all_fields(resource) do
+        [] ->
+          ""
+
+        fields ->
+          rows =
+            Enum.map_join(fields, "\n", fn %Manifest.Field{} = f ->
+              row_field(f, resource_lookup, type_lookup)
+            end)
+
+          "\n\n## Fields\n\n| Name | Type | Notes |\n|------|------|-------|\n" <> rows
+      end
+
+    String.trim(header <> description <> fields_section)
+  end
+
   defp render_named_type(%Manifest.Type{} = type, resource_lookup, type_lookup) do
     anchor = name_anchor(type.name)
     header = "<a id=\"#{anchor}\"></a>\n# Type `#{type.name}`"
@@ -985,7 +1017,10 @@ defmodule AshLua.Docs do
         record_link(type.resource_module, resource_lookup)
 
       :embedded_resource ->
-        record_link(type.resource_module, resource_lookup)
+        case Map.get(type_lookup, type.resource_module) do
+          %Manifest.Type{name: name} -> "[`#{name}`](##{name_anchor(name)})"
+          _ -> "`embedded record`"
+        end
 
       :type_ref ->
         case Map.get(type_lookup, type.module) do
@@ -1097,6 +1132,16 @@ defmodule AshLua.Docs do
        do: d
 
   defp record_type_candidate_summary(_), do: "record type"
+
+  defp named_type_candidate(%Manifest.Type{kind: :embedded_resource} = type) do
+    summary =
+      case type.resource do
+        %Manifest.Resource{description: d} when is_binary(d) and d != "" -> d
+        _ -> "embedded record type"
+      end
+
+    %{id: type.name, kind: "embedded record type", summary: summary}
+  end
 
   defp named_type_candidate(%Manifest.Type{name: name, kind: kind}) do
     %{id: name, kind: "type (#{kind})", summary: "named #{kind} type"}

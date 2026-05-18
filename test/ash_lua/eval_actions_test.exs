@@ -118,10 +118,20 @@ defmodule AshLua.EvalActionsTest do
 
       assert {:ok, %{result: nil, error: err}} = Ash.run_action(input)
       refute err["message"] =~ "error object is a table"
-      assert err["message"] =~ "invalid fields"
+      assert err["message"] == "unknown field `totally_not_a_real_field`"
       assert [first | _] = err["errors"]
       first_map = if is_map(first), do: first, else: Map.new(first)
-      assert first_map["code"] == "invalid_fields"
+      assert first_map["code"] == "unknown_field"
+      first_fields = first_map["fields"]
+      first_fields_list = if is_list(first_fields), do: first_fields, else: [first_fields]
+      # `fields` is a Lua array → comes back as either a list or a [{1,v}] kv-list
+      flat =
+        Enum.map(first_fields_list, fn
+          {_, v} -> v
+          v -> v
+        end)
+
+      assert "totally_not_a_real_field" in flat
     end
 
     test "scopes the surface — actions outside `eval_actions` are not callable" do

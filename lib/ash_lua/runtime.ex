@@ -121,9 +121,18 @@ defmodule AshLua.Runtime do
           operation_call(resource, action, input, ash_opts, operation, state)
 
         true ->
-          err = {:operation_only_supported_on_list_operations, action.type}
-          {encoded, state} = Lua.encode!(state, encode_fields_error(err))
-          {[nil, encoded], state}
+          t = Atom.to_string(action.type)
+
+          encode_error_response(
+            state,
+            %AshLua.Errors.FieldsError{
+              message: "`operation` is only supported on list operations (this is `#{t}`)",
+              short_message: "operation only on list operations",
+              code: "operation_only_on_list_operations",
+              fields: [],
+              vars: %{"action_type" => t}
+            }
+          )
       end
     end
   end
@@ -140,13 +149,11 @@ defmodule AshLua.Runtime do
             {[true, nil], state}
 
           {:error, error} ->
-            {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
-            {[nil, encoded], state}
+            encode_error_response(state, error)
         end
 
       {:error, reason} ->
-        {encoded, state} = Lua.encode!(state, encode_fields_error(reason))
-        {[nil, encoded], state}
+        encode_error_response(state, reason)
     end
   end
 
@@ -157,13 +164,16 @@ defmodule AshLua.Runtime do
         {[encoded, nil], state}
 
       {:operation_error, reason} ->
-        {encoded, state} = Lua.encode!(state, encode_fields_error(reason))
-        {[nil, encoded], state}
+        encode_error_response(state, reason)
 
       {:error, error} ->
-        {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
-        {[nil, encoded], state}
+        encode_error_response(state, error)
     end
+  end
+
+  defp encode_error_response(state, error) do
+    {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
+    {[nil, encoded], state}
   end
 
   defp run_read_operation(resource, action, input, opts, operation) do
@@ -204,25 +214,65 @@ defmodule AshLua.Runtime do
   end
 
   defp perform_operation(_query, _resource, other, _opts) do
-    {:operation_error, "invalid operation: #{inspect(other)}"}
+    s = describe_operation(other)
+
+    {:operation_error,
+     %AshLua.Errors.FieldsError{
+       message: "unknown operation `#{s}`",
+       short_message: "unknown operation",
+       code: "unknown_operation",
+       fields: [],
+       vars: %{"name" => s}
+     }}
   end
+
+  defp describe_operation(value) when is_binary(value), do: value
+  defp describe_operation(value) when is_atom(value), do: Atom.to_string(value)
+  defp describe_operation(value) when is_list(value), do: "list"
+  defp describe_operation(_), do: "value"
 
   defp safe_field_atom(name) do
     {:ok, String.to_existing_atom(name)}
   rescue
-    ArgumentError -> {:operation_error, "unknown field: #{inspect(name)}"}
+    ArgumentError ->
+      {:operation_error,
+       %AshLua.Errors.FieldsError{
+         message: "unknown field `#{name}` referenced by operation",
+         short_message: "unknown field",
+         code: "unknown_operation_field",
+         fields: [name],
+         vars: %{"name" => name}
+       }}
   end
 
   defp safe_op_atom(name) do
     {:ok, String.to_existing_atom(name)}
   rescue
-    ArgumentError -> {:operation_error, "invalid operation kind: #{inspect(name)}"}
+    ArgumentError ->
+      {:operation_error,
+       %AshLua.Errors.FieldsError{
+         message: "unknown operation kind `#{name}`",
+         short_message: "unknown operation kind",
+         code: "unknown_operation_kind",
+         fields: [],
+         vars: %{"name" => name}
+       }}
   end
 
   defp build_aggregate(resource, kind, field) do
     {:ok, Ash.Query.Aggregate.new!(resource, :aggregate_result, kind, field: field)}
   rescue
-    e -> {:operation_error, Exception.message(e)}
+    e ->
+      msg = Exception.message(e)
+
+      {:operation_error,
+       %AshLua.Errors.FieldsError{
+         message: "could not build aggregate: #{msg}",
+         short_message: "aggregate build failed",
+         code: "aggregate_build_failed",
+         fields: [],
+         vars: %{"message" => msg}
+       }}
   end
 
   defp run_aggregate(query, aggregate, opts) do
@@ -231,21 +281,6 @@ defmodule AshLua.Runtime do
       {:ok, value} -> {:ok, value}
       {:error, _} = err -> err
     end
-  end
-
-  defp encode_fields_error(reason) do
-    %{
-      "message" => "invalid fields: #{inspect(reason)}",
-      "errors" => [
-        %{
-          "message" => inspect(reason),
-          "short_message" => "invalid_fields",
-          "code" => "invalid_fields",
-          "fields" => [],
-          "vars" => %{}
-        }
-      ]
-    }
   end
 
   defp decode_call_args(_state, []), do: %{}

@@ -64,17 +64,23 @@ defmodule AshLua.EvalActions.Run.Eval do
   # have seen on the unwrapped path.
   defp extract_structured_error(%Lua.RuntimeException{original: original, state: state})
        when not is_nil(state) do
-    decoded =
-      case original do
-        nil -> nil
-        :undefined -> nil
-        _ -> safe_decode(original, state)
-      end
-
-    normalize_error_table(decoded)
+    original
+    |> raised_value()
+    |> case do
+      nil -> nil
+      value -> value |> safe_decode(state) |> normalize_error_table()
+    end
   end
 
   defp extract_structured_error(_), do: nil
+
+  # Pull the actual raised Lua value out of Luerl's error tagging. `assert(x,
+  # err)` raises `{:assert_error, err}`; `error(err)` raises `{:error_call,
+  # [err]}`. Anything else (`{:illegal_index, ...}`, etc.) isn't an
+  # ash_lua-shaped error and we let the default rescue formatter handle it.
+  defp raised_value({:assert_error, value}), do: value
+  defp raised_value({:error_call, [value | _]}), do: value
+  defp raised_value(_), do: nil
 
   defp safe_decode(value, state) do
     :luerl.decode(value, state)

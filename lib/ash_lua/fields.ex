@@ -33,6 +33,34 @@ defmodule AshLua.Fields do
   """
 
   alias Ash.Info.Manifest
+  alias AshLua.Errors.FieldsError
+
+  # Local constructor — builds the structured error at the throw site so the
+  # rendering layer doesn't have to enumerate cases. The error flows through
+  # `AshLua.Error` protocol like any Ash error.
+  defp err(message, code, fields \\ [], vars \\ %{}) do
+    %FieldsError{
+      message: message,
+      short_message: String.replace(code, "_", " "),
+      code: code,
+      fields: Enum.map(fields, &name_str/1),
+      vars: vars
+    }
+  end
+
+  defp name_str(name) when is_atom(name), do: Atom.to_string(name)
+  defp name_str(name) when is_binary(name), do: name
+  defp name_str(name) when is_integer(name), do: Integer.to_string(name)
+  defp name_str(name), do: to_string(name)
+
+  defp describe_kind(item) when is_binary(item), do: "a string"
+  defp describe_kind(item) when is_atom(item), do: "an atom"
+  defp describe_kind(item) when is_integer(item), do: "an integer"
+  defp describe_kind(item) when is_float(item), do: "a number"
+  defp describe_kind(item) when is_list(item), do: "a list"
+  defp describe_kind(item) when is_map(item), do: "a table"
+  defp describe_kind(item) when is_tuple(item), do: "a tuple"
+  defp describe_kind(_), do: "an unknown value"
 
   @doc """
   Builds `{select, load, template}` for the given resource + action.
@@ -87,12 +115,15 @@ defmodule AshLua.Fields do
     end
   end
 
-  def parse(_), do: {:error, :invalid_fields}
+  def parse(_), do: {:error, err("`fields` must be a list", "invalid_fields")}
 
   defp parse_item(name) when is_binary(name) do
     case to_field_atom(name) do
-      nil -> {:error, {:unknown_field, name}}
-      atom -> {:ok, [{:simple, atom}]}
+      nil ->
+        {:error, err("unknown field `#{name}`", "unknown_field", [name], %{"name" => name})}
+
+      atom ->
+        {:ok, [{:simple, atom}]}
     end
   end
 
@@ -112,12 +143,23 @@ defmodule AshLua.Fields do
     end
   end
 
-  defp parse_item(other), do: {:error, {:invalid_field_item, other}}
+  defp parse_item(other) do
+    kind = describe_kind(other)
+
+    {:error,
+     err(
+       "invalid field item — must be a name or a one-key table, got #{kind}",
+       "invalid_field_item",
+       [],
+       %{"kind" => kind}
+     )}
+  end
 
   defp parse_entry(key, value) do
     case to_field_atom(key) do
       nil ->
-        {:error, {:unknown_field, key}}
+        s = name_str(key)
+        {:error, err("unknown field `#{s}`", "unknown_field", [s], %{"name" => s})}
 
       name ->
         case parse_value(value) do
@@ -161,7 +203,17 @@ defmodule AshLua.Fields do
     end
   end
 
-  defp parse_value(_), do: {:error, :invalid_field_value}
+  defp parse_value(other) do
+    kind = describe_kind(other)
+
+    {:error,
+     err(
+       "invalid field value — must be a list, a one-key table, or `{ args = …, fields = … }`",
+       "invalid_field_value",
+       [],
+       %{"kind" => kind}
+     )}
+  end
 
   defp stringify_args(map) when is_map(map), do: map
   defp stringify_args(list) when is_list(list), do: Map.new(list)
@@ -239,7 +291,17 @@ defmodule AshLua.Fields do
   defp select_for_type(%Manifest.Type{}, [], _ctx), do: {[], [], :passthrough}
 
   defp select_for_type(%Manifest.Type{kind: kind}, _ast, _ctx) do
-    throw({:error, {:invalid_field_selection, kind}})
+    k = name_str(kind)
+
+    throw(
+      {:error,
+       err(
+         "primitive type `#{k}` cannot have sub-fields",
+         "invalid_field_selection",
+         [],
+         %{"kind" => k}
+       )}
+    )
   end
 
   defp select_for_resource(%Manifest.Resource{} = resource, :default, _ctx) do
@@ -267,7 +329,17 @@ defmodule AshLua.Fields do
 
       {:calculation, field} ->
         if has_required_args?(field) do
-          throw({:error, {:calculation_requires_args, name}})
+          s = name_str(name)
+
+          throw(
+            {:error,
+             err(
+               "calculation `#{s}` requires arguments — use `{ #{s} = { args = { … } } }`",
+               "calculation_requires_args",
+               [s],
+               %{"name" => s}
+             )}
+          )
         else
           {[], [name], {:calc, name, primitive_or_sub(field.type, :default, ctx)}}
         end
@@ -287,7 +359,9 @@ defmodule AshLua.Fields do
         {[], [load_entry], {kind, rel.name, sub_template}}
 
       :unknown ->
-        throw({:error, {:unknown_field, name}})
+        s = name_str(name)
+
+        throw({:error, err("unknown field `#{s}`", "unknown_field", [s], %{"name" => s})})
     end
   end
 
@@ -297,20 +371,50 @@ defmodule AshLua.Fields do
         {sub_sel, sub_ld, sub_tmpl} = select_for_type(field.type, sub_ast, ctx)
 
         if sub_sel != [] or sub_ld != [] do
-          throw({:error, {:cannot_select_or_load_under_attribute, name}})
+          s = name_str(name)
+
+          throw(
+            {:error,
+             err(
+               "cannot select or load fields under attribute `#{s}`",
+               "cannot_select_under_attribute",
+               [s],
+               %{"name" => s}
+             )}
+          )
         end
 
         {[name], [], {:attr, name, sub_tmpl}}
 
       {:calculation, field} ->
         if has_required_args?(field) do
-          throw({:error, {:calculation_requires_args, name}})
+          s = name_str(name)
+
+          throw(
+            {:error,
+             err(
+               "calculation `#{s}` requires arguments — use `{ #{s} = { args = { … } } }`",
+               "calculation_requires_args",
+               [s],
+               %{"name" => s}
+             )}
+          )
         end
 
         {sub_sel, sub_ld, sub_tmpl} = select_for_type(field.type, sub_ast, ctx)
 
         if sub_sel != [] or sub_ld != [] do
-          throw({:error, {:cannot_select_or_load_under_calculation, name}})
+          s = name_str(name)
+
+          throw(
+            {:error,
+             err(
+               "cannot select or load fields under calculation `#{s}`",
+               "cannot_select_under_calculation",
+               [s],
+               %{"name" => s}
+             )}
+          )
         end
 
         {[], [name], {:calc, name, sub_tmpl}}
@@ -324,10 +428,22 @@ defmodule AshLua.Fields do
         {[], [load_entry], {kind, rel.name, sub_tmpl}}
 
       {:aggregate, _field} ->
-        throw({:error, {:cannot_nest_under_aggregate, name}})
+        s = name_str(name)
+
+        throw(
+          {:error,
+           err(
+             "cannot nest fields under aggregate `#{s}`",
+             "cannot_nest_under_aggregate",
+             [s],
+             %{"name" => s}
+           )}
+        )
 
       :unknown ->
-        throw({:error, {:unknown_field, name}})
+        s = name_str(name)
+
+        throw({:error, err("unknown field `#{s}`", "unknown_field", [s], %{"name" => s})})
     end
   end
 
@@ -337,7 +453,17 @@ defmodule AshLua.Fields do
         {sub_sel, sub_ld, sub_tmpl} = select_for_type(field.type, sub_ast, ctx)
 
         if sub_sel != [] or sub_ld != [] do
-          throw({:error, {:cannot_select_or_load_under_calculation, name}})
+          s = name_str(name)
+
+          throw(
+            {:error,
+             err(
+               "cannot select or load fields under calculation `#{s}`",
+               "cannot_select_under_calculation",
+               [s],
+               %{"name" => s}
+             )}
+          )
         end
 
         # Ash supports `{calc_name, %{arg => value}}` in load.
@@ -345,7 +471,17 @@ defmodule AshLua.Fields do
         {[], [load_entry], {:calc, name, sub_tmpl}}
 
       _ ->
-        throw({:error, {:args_only_supported_for_calculations, name}})
+        s = name_str(name)
+
+        throw(
+          {:error,
+           err(
+             "`args` is only supported on calculations (field `#{s}`)",
+             "args_only_supported_for_calculations",
+             [s],
+             %{"name" => s}
+           )}
+        )
     end
   end
 
@@ -386,7 +522,17 @@ defmodule AshLua.Fields do
       atom = if is_atom(k), do: k, else: safe_atom!(k)
 
       unless MapSet.member?(name_set, atom) do
-        throw({:error, {:unknown_calculation_arg, atom}})
+        s = name_str(atom)
+
+        throw(
+          {:error,
+           err(
+             "unknown argument `#{s}` for calculation",
+             "unknown_calculation_arg",
+             [s],
+             %{"name" => s}
+           )}
+        )
       end
 
       {atom, v}
@@ -398,7 +544,18 @@ defmodule AshLua.Fields do
   defp safe_atom!(name) when is_binary(name) do
     String.to_existing_atom(name)
   rescue
-    ArgumentError -> throw({:error, {:unknown_calculation_arg, name}})
+    ArgumentError ->
+      s = name_str(name)
+
+      throw(
+        {:error,
+         err(
+           "unknown argument `#{s}` for calculation",
+           "unknown_calculation_arg",
+           [s],
+           %{"name" => s}
+         )}
+      )
   end
 
   defp primitive_or_sub(%Manifest.Type{} = type, ast, ctx) do
@@ -421,21 +578,54 @@ defmodule AshLua.Fields do
         case node do
           {:simple, name} ->
             case find_field(fields, name) do
-              nil -> throw({:error, {:unknown_typed_map_field, name}})
-              %{type: t} -> {:typed_map_field, name, primitive_or_sub(t, :default, ctx)}
+              nil ->
+                s = name_str(name)
+
+                throw(
+                  {:error,
+                   err(
+                     "unknown field `#{s}` in typed map",
+                     "unknown_typed_map_field",
+                     [s],
+                     %{"name" => s}
+                   )}
+                )
+
+              %{type: t} ->
+                {:typed_map_field, name, primitive_or_sub(t, :default, ctx)}
             end
 
           {:nested, name, sub_ast} ->
             case find_field(fields, name) do
               nil ->
-                throw({:error, {:unknown_typed_map_field, name}})
+                s = name_str(name)
+
+                throw(
+                  {:error,
+                   err(
+                     "unknown field `#{s}` in typed map",
+                     "unknown_typed_map_field",
+                     [s],
+                     %{"name" => s}
+                   )}
+                )
 
               %{type: t} ->
                 {:typed_map_field, name, primitive_or_sub(t, sub_ast, ctx)}
             end
 
           {:with_args, name, _, _} ->
-            throw({:error, {:args_not_supported_in_typed_map, name}})
+            s = name_str(name)
+
+            throw(
+              {:error,
+               err(
+                 "`args` is not supported in typed map fields (field `#{s}`)",
+                 "args_not_supported_in_typed_map",
+                 [s],
+                 %{"name" => s}
+               )}
+            )
         end
       end)
 
@@ -467,7 +657,17 @@ defmodule AshLua.Fields do
         {:simple, name} ->
           case Enum.find(indexed, &(&1.name == name)) do
             nil ->
-              throw({:error, {:unknown_tuple_field, name}})
+              s = name_str(name)
+
+              throw(
+                {:error,
+                 err(
+                   "unknown field `#{s}` in tuple",
+                   "unknown_tuple_field",
+                   [s],
+                   %{"name" => s}
+                 )}
+              )
 
             %{type: t, index: idx} ->
               {:tuple_field, name, idx, primitive_or_sub(t, :default, ctx)}
@@ -475,12 +675,35 @@ defmodule AshLua.Fields do
 
         {:nested, name, sub_ast} ->
           case Enum.find(indexed, &(&1.name == name)) do
-            nil -> throw({:error, {:unknown_tuple_field, name}})
-            %{type: t, index: idx} -> {:tuple_field, name, idx, primitive_or_sub(t, sub_ast, ctx)}
+            nil ->
+              s = name_str(name)
+
+              throw(
+                {:error,
+                 err(
+                   "unknown field `#{s}` in tuple",
+                   "unknown_tuple_field",
+                   [s],
+                   %{"name" => s}
+                 )}
+              )
+
+            %{type: t, index: idx} ->
+              {:tuple_field, name, idx, primitive_or_sub(t, sub_ast, ctx)}
           end
 
         {:with_args, name, _, _} ->
-          throw({:error, {:args_not_supported_in_tuple, name}})
+          s = name_str(name)
+
+          throw(
+            {:error,
+             err(
+               "`args` is not supported in tuple fields (field `#{s}`)",
+               "args_not_supported_in_tuple",
+               [s],
+               %{"name" => s}
+             )}
+          )
       end)
 
     {[], [], {:tuple, entries}}
@@ -500,13 +723,29 @@ defmodule AshLua.Fields do
       ast
       |> Enum.map(fn
         {:simple, _name} ->
-          throw({:error, :union_member_requires_sub_selection_or_omission})
+          throw(
+            {:error,
+             err(
+               "union members must be referenced as `{ member_name = { ... sub-fields ... } }`",
+               "union_member_requires_sub_selection"
+             )}
+          )
 
         {:nested, name, sub_ast} ->
           {name, sub_ast}
 
         {:with_args, name, _, _} ->
-          throw({:error, {:args_not_supported_in_union, name}})
+          s = name_str(name)
+
+          throw(
+            {:error,
+             err(
+               "`args` is not supported in union members (member `#{s}`)",
+               "args_not_supported_in_union",
+               [s],
+               %{"name" => s}
+             )}
+          )
       end)
       |> Map.new()
 
@@ -524,8 +763,21 @@ defmodule AshLua.Fields do
       |> Enum.reject(fn name -> Enum.any?(members, &(&1.name == name)) end)
 
     case unknown_overrides do
-      [] -> :ok
-      [name | _] -> throw({:error, {:unknown_union_member, name}})
+      [] ->
+        :ok
+
+      [name | _] ->
+        s = name_str(name)
+
+        throw(
+          {:error,
+           err(
+             "unknown union member `#{s}`",
+             "unknown_union_member",
+             [s],
+             %{"name" => s}
+           )}
+        )
     end
 
     {[], [], {:union, entries}}

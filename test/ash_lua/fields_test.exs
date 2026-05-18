@@ -144,7 +144,11 @@ defmodule AshLua.FieldsTest do
         )
 
       err_map = Map.new(err)
-      assert err_map["message"] =~ "invalid fields"
+      assert err_map["message"] == "unknown field `nope`"
+      first = err_map["errors"] |> List.first() |> elem(1)
+      first_map = Map.new(first)
+      assert first_map["code"] == "unknown_field"
+      assert Lua.Table.as_list(first_map["fields"]) == ["nope"]
     end
   end
 
@@ -177,7 +181,11 @@ defmodule AshLua.FieldsTest do
         )
 
       err_map = Map.new(err)
-      assert err_map["message"] =~ "invalid fields"
+      assert err_map["message"] == "unknown argument `wrongarg` for calculation"
+      first = err_map["errors"] |> List.first() |> elem(1)
+      first_map = Map.new(first)
+      assert first_map["code"] == "unknown_calculation_arg"
+      assert Lua.Table.as_list(first_map["fields"]) == ["wrongarg"]
     end
   end
 
@@ -419,7 +427,10 @@ defmodule AshLua.FieldsTest do
         )
 
       err_map = Map.new(err)
-      assert err_map["message"] =~ "invalid operation"
+      assert err_map["message"] == "unknown operation `bogus`"
+      first = err_map["errors"] |> List.first() |> elem(1)
+      first_map = Map.new(first)
+      assert first_map["code"] == "unknown_operation"
     end
 
     test "operation on a non-list operation is rejected" do
@@ -432,7 +443,10 @@ defmodule AshLua.FieldsTest do
         )
 
       err_map = Map.new(err)
-      assert err_map["message"] =~ "invalid fields"
+      assert err_map["message"] =~ "only supported on list operations"
+      first = err_map["errors"] |> List.first() |> elem(1)
+      first_map = Map.new(first)
+      assert first_map["code"] == "operation_only_on_list_operations"
     end
   end
 

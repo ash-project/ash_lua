@@ -549,15 +549,14 @@ defmodule AshLua.Docs do
   defp action_description(%Manifest.Action{description: desc}), do: desc
 
   defp input_section(action, resource, resource_lookup, type_lookup) do
-    arg_rows =
-      (action.arguments || [])
-      |> Enum.map(&argument_row(&1, resource_lookup, type_lookup))
+    input_rows =
+      (action.inputs || [])
+      |> Enum.map(&input_row(&1, resource_lookup, type_lookup))
 
-    accept_rows = accepted_rows(action, resource, resource_lookup, type_lookup)
     pk_rows = pk_rows(action, resource)
     reserved_rows = reserved_rows(action)
 
-    rows = arg_rows ++ pk_rows ++ accept_rows ++ reserved_rows
+    rows = input_rows ++ pk_rows ++ reserved_rows
 
     if rows == [] do
       "## Input\n\n_None._"
@@ -571,62 +570,20 @@ defmodule AshLua.Docs do
     end
   end
 
-  defp argument_row(%Manifest.Argument{} = arg, resource_lookup, type_lookup) do
-    required = if not arg.allow_nil? and not arg.has_default?, do: "yes", else: "no"
+  defp input_row(%Manifest.Argument{} = input, resource_lookup, type_lookup) do
+    required = if not input.allow_nil? and not input.has_default?, do: "yes", else: "no"
 
     notes =
       [
-        arg.description,
-        if(arg.has_default?, do: "has default"),
-        if(arg.sensitive?, do: "sensitive")
+        input.description,
+        if(input.has_default?, do: "has default"),
+        if(input.sensitive?, do: "sensitive")
       ]
       |> Enum.reject(&(is_nil(&1) or &1 == ""))
       |> Enum.join("; ")
 
-    "| `#{arg.name}` | #{type_link(arg.type, resource_lookup, type_lookup)} | #{required} | #{notes} |"
+    "| `#{input.name}` | #{type_link(input.type, resource_lookup, type_lookup)} | #{required} | #{notes} |"
   end
-
-  defp accepted_rows(
-         %Manifest.Action{type: type} = action,
-         resource,
-         resource_lookup,
-         type_lookup
-       )
-       when type in [:create, :update] do
-    accepted = action.accept || []
-    required_attrs = MapSet.new(action.require_attributes || [])
-    nilable = MapSet.new(action.allow_nil_input || [])
-
-    Enum.map(accepted, fn attr_name ->
-      case Map.get(resource.fields, attr_name) do
-        %Manifest.Field{} = f ->
-          required =
-            cond do
-              MapSet.member?(required_attrs, attr_name) -> "yes"
-              MapSet.member?(nilable, attr_name) -> "no"
-              f.allow_nil? -> "no"
-              f.has_default? -> "no"
-              true -> "yes"
-            end
-
-          notes =
-            [
-              f.description,
-              if(f.has_default?, do: "has default"),
-              if(f.sensitive?, do: "sensitive")
-            ]
-            |> Enum.reject(&(is_nil(&1) or &1 == ""))
-            |> Enum.join("; ")
-
-          "| `#{attr_name}` | #{type_link(f.type, resource_lookup, type_lookup)} | #{required} | #{notes} |"
-
-        _ ->
-          "| `#{attr_name}` | _unknown_ | – | – |"
-      end
-    end)
-  end
-
-  defp accepted_rows(_, _, _, _), do: []
 
   defp pk_rows(%Manifest.Action{type: type}, resource)
        when type in [:update, :delete, :destroy] do

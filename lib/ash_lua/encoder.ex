@@ -103,8 +103,24 @@ defmodule AshLua.Encoder do
     }
   end
 
+  # Luerl decodes Lua tables as keyword-list-of-2-tuples — integer-keyed for
+  # sequences, string-keyed for maps. Flatten the same way `decode_input/1`
+  # does on the input side, so a script's returned table comes through as a
+  # plain list or map instead of a verbose nested `{type:"tuple", values:[...]}`
+  # tree.
   def encode_result(value) when is_list(value) do
-    Enum.map(value, &encode_result/1)
+    cond do
+      integer_keyed?(value) ->
+        value
+        |> Enum.sort_by(fn {k, _v} -> k end)
+        |> Enum.map(fn {_k, v} -> encode_result(v) end)
+
+      keyword_pairs?(value) ->
+        Map.new(value, fn {k, v} -> {stringify_key(k), encode_result(v)} end)
+
+      true ->
+        Enum.map(value, &encode_result/1)
+    end
   end
 
   # Luerl reference records — Lua functions / userdata / raw table refs that
@@ -118,6 +134,11 @@ defmodule AshLua.Encoder do
   def encode_result({:erl_mfa, _, _, _}), do: %{"opaque" => "function"}
   def encode_result({:tref, _}), do: %{"opaque" => "table_reference"}
   def encode_result({:usdref, _}), do: %{"opaque" => "userdata"}
+  # Luerl also returns the decoded shape `{module, function, arity_or_undefined}`
+  # for built-in callables like `print` (module=:luerl_lib_basic).
+  def encode_result({m, f, a})
+      when is_atom(m) and is_atom(f) and (is_integer(a) or is_atom(a)),
+      do: %{"opaque" => "function"}
 
   # Any other Erlang tuple shouldn't normally appear in a Lua-decoded result,
   # but the eval action's `:term` slot can carry one when an Ash action

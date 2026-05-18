@@ -37,6 +37,62 @@ defmodule AshLua.EvalActionsTest do
       assert is_binary(err_map["message"])
     end
 
+    test "wraps Lua function references as opaque markers so JSON encoding survives" do
+      # `return print` hands us a `{:funref, ...}` Luerl record. The action's
+      # `result` slot is typed `:term`, so without normalization the funref
+      # would reach Jason and crash. Verify it renders as a self-describing
+      # opaque marker instead.
+      input = Ash.ActionInput.for_action(MCPActions, :eval, %{script: "return print"})
+
+      assert {:ok, %{result: %{"opaque" => "function"}, error: nil}} = Ash.run_action(input)
+      assert {:ok, _} = Jason.encode(%{result: %{"opaque" => "function"}, error: nil})
+    end
+
+    test "wraps function references inside a returned table" do
+      # A script that returns a Lua table containing functions (think
+      # `return loop.item` where `loop.item` exposes methods alongside data).
+      # The decoded table flattens to a plain string-keyed map; function
+      # values become opaque markers instead of crashing Jason.
+      input =
+        Ash.ActionInput.for_action(MCPActions, :eval, %{
+          script: """
+          return { data = "hello", method = print }
+          """
+        })
+
+      assert {:ok, %{result: result, error: nil}} = Ash.run_action(input)
+      assert result == %{"data" => "hello", "method" => %{"opaque" => "function"}}
+      assert {:ok, _} = Jason.encode(%{result: result})
+    end
+
+    test "Luerl-decoded Lua arrays come back as plain lists, not nested tuple-maps" do
+      input =
+        Ash.ActionInput.for_action(MCPActions, :eval, %{
+          script: """
+          return { 10, 20, 30 }
+          """
+        })
+
+      assert {:ok, %{result: [10, 20, 30], error: nil}} = Ash.run_action(input)
+    end
+
+    test "an array of records flattens cleanly through the JSON-safe encoder" do
+      {:ok, _} = Ash.create(Post, %{title: "p1", body: "b1"}, action: :create)
+      {:ok, _} = Ash.create(Post, %{title: "p2", body: "b2"}, action: :create)
+
+      input =
+        Ash.ActionInput.for_action(MCPActions, :eval, %{
+          script: """
+          return assert(posts.post.read({ fields = { "title" }, sort = "title" }))
+          """
+        })
+
+      assert {:ok, %{result: result, error: nil}} = Ash.run_action(input)
+      assert is_list(result)
+      assert Enum.map(result, &Map.get(&1, "title")) == ["p1", "p2"]
+      assert {:ok, _} = Jason.encode(%{result: result})
+    end
+
     test "captures a Lua syntax error as a structured response" do
       input =
         Ash.ActionInput.for_action(MCPActions, :eval, %{

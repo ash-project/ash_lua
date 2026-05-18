@@ -105,6 +105,25 @@ defmodule AshLua.EvalActionsTest do
       assert [%{"code" => "lua_error"} | _] = err["errors"]
     end
 
+    test "an assert(...) on a failed action surfaces the structured error, not 'object is a table'" do
+      # A script that asserts a known-bad call. The eval action should
+      # decode the err table back out of the Lua exception and surface the
+      # original `invalid_fields` / etc. shape, not a generic Lua error.
+      input =
+        Ash.ActionInput.for_action(MCPActions, :eval, %{
+          script: """
+          return assert(posts.post.read({ fields = { "totally_not_a_real_field" } }))
+          """
+        })
+
+      assert {:ok, %{result: nil, error: err}} = Ash.run_action(input)
+      refute err["message"] =~ "error object is a table"
+      assert err["message"] =~ "invalid fields"
+      assert [first | _] = err["errors"]
+      first_map = if is_map(first), do: first, else: Map.new(first)
+      assert first_map["code"] == "invalid_fields"
+    end
+
     test "scopes the surface — actions outside `eval_actions` are not callable" do
       # MCPActions exposes Post[:read, :create] and Comment[:read]. Try to call
       # a write action on Comment that wasn't listed.

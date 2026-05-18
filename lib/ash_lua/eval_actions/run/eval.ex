@@ -51,9 +51,45 @@ defmodule AshLua.EvalActions.Run.Eval do
       {:ok, %{result: AshLua.Encoder.encode_result(result), error: error}}
     rescue
       e in [Lua.CompilerException, Lua.RuntimeException] ->
-        {:ok, %{result: nil, error: format_lua_error(e)}}
+        {:ok, %{result: nil, error: extract_structured_error(e) || format_lua_error(e)}}
     end
   end
+
+  # When a Lua script does `assert(action_call())` and `action_call()` returns
+  # `(nil, err_table)`, Lua raises with the err_table as the error object. The
+  # default `Lua.RuntimeException` message is the opaque "error object is a
+  # table!" — useless for diagnosing `invalid_fields` / `not_found` / etc.
+  # Detect that case and decode the original error table back out so the
+  # action's `error` slot carries the same structured shape the script would
+  # have seen on the unwrapped path.
+  defp extract_structured_error(%Lua.RuntimeException{original: original, state: state})
+       when not is_nil(state) do
+    decoded =
+      case original do
+        nil -> nil
+        :undefined -> nil
+        _ -> safe_decode(original, state)
+      end
+
+    normalize_error_table(decoded)
+  end
+
+  defp extract_structured_error(_), do: nil
+
+  defp safe_decode(value, state) do
+    :luerl.decode(value, state)
+  rescue
+    _ -> nil
+  end
+
+  defp normalize_error_table(list) when is_list(list) do
+    case AshLua.Encoder.decode_input(list) do
+      %{"message" => _} = err -> err
+      _ -> nil
+    end
+  end
+
+  defp normalize_error_table(_), do: nil
 
   defp split_lua_return([]), do: {nil, nil}
   defp split_lua_return([value]), do: {value, nil}

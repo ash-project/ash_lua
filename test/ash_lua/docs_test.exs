@@ -24,7 +24,12 @@ defmodule AshLua.DocsTest do
 
   describe "topics/1 and topic_doc/2" do
     test "lists the available topics, sorted" do
-      assert AshLua.Docs.topics(opts()) == ["error-handling", "filters", "pagination"]
+      assert AshLua.Docs.topics(opts()) == [
+               "error-handling",
+               "filters",
+               "pagination",
+               "transactions"
+             ]
     end
 
     test "renders the filters topic" do
@@ -35,6 +40,13 @@ defmodule AshLua.DocsTest do
       assert md =~ ~s/["and"]/
       assert md =~ ~s/["or"]/
       assert md =~ ~s/["not"]/
+    end
+
+    test "renders the transactions topic" do
+      {:ok, md} = AshLua.Docs.topic_doc(opts(), "transactions")
+      assert md =~ "# Transactions"
+      assert md =~ "utils.transaction"
+      assert md =~ "rolled back"
     end
 
     test "renders the pagination topic" do

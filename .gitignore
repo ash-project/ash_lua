@@ -32,3 +32,7 @@ ash_lua-*.tar
 .vscode/
 
 notes
+
+# Mnesia on-disk schema produced by test runs; test_helper.exs wipes and
+# recreates it each run, so it should never be tracked or scanned.
+/Mnesia.*/

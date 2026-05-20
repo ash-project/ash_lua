@@ -11,5 +11,6 @@ defmodule AshLua.Test.Posts.MCPActions do
   eval_actions do
     resource AshLua.Test.Posts.Post, actions: [:read, :create]
     resource AshLua.Test.Posts.Comment, actions: [:read]
+    resource AshLua.Test.Posts.MnesiaNote, actions: [:read, :create]
   end
 end

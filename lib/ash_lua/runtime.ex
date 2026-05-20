@@ -60,6 +60,7 @@ defmodule AshLua.Runtime do
     lua
     |> Lua.put_private(@private_key, private)
     |> install_entrypoints(manifest)
+    |> install_utils(manifest)
   end
 
   @doc """
@@ -105,6 +106,373 @@ defmodule AshLua.Runtime do
       lua
     end
   end
+
+  defp install_utils(lua, %Manifest{} = manifest) do
+    lookup = resource_lookup_by_path(manifest)
+
+    lua
+    |> Lua.set!([:utils], %{})
+    |> Lua.set!([:utils, :transaction], %{})
+    |> Lua.set!([:utils, :transaction, :transact], transaction_callback(lookup))
+    |> Lua.set!([:utils, :transaction, :rollback], rollback_callback())
+  end
+
+  defp resource_lookup_by_path(%Manifest{} = manifest) do
+    manifest.resources
+    |> Enum.flat_map(fn %Manifest.Resource{module: module} ->
+      if AshLua.Resource.Info.expose?(module) do
+        [{transaction_resource_path(module), module}]
+      else
+        []
+      end
+    end)
+    |> Map.new()
+  end
+
+  defp transaction_resource_path(module) do
+    domain = Ash.Resource.Info.domain(module)
+    AshLua.Domain.Info.name(domain) <> "." <> AshLua.Resource.Info.name(module)
+  end
+
+  defp transaction_callback(lookup) do
+    fn args, state ->
+      handle_transaction(args, state, lookup)
+    end
+  end
+
+  # Build a full error envelope (same shape as a real action failure) and
+  # hand it back as a Lua-side error. `Lua.set!/3`'s wrapper sees the
+  # `{:error, tref, lua}` return and calls `:luerl_lib.lua_error/2`, which
+  # throws inside the Lua VM. The outer `Lua.call_function/3` in
+  # `run_transaction/3` then catches that as `{:error, tref, state}`, and
+  # our message-channel stash carries the tref out to the transaction
+  # handler — which decodes it and surfaces the envelope as the
+  # transaction's `err`.
+  defp rollback_callback do
+    fn args, state ->
+      message =
+        case args do
+          [] -> "transaction rolled back"
+          [value | _] -> decode_rollback_message(state, value)
+        end
+
+      envelope = %{
+        "class" => "invalid",
+        "errors" => [
+          %{
+            "message" => message,
+            "short_message" => "rolled back",
+            "code" => "rolled_back",
+            "fields" => [],
+            "vars" => %{}
+          }
+        ]
+      }
+
+      {tref, state} = Lua.encode!(state, envelope)
+      {:error, tref, state}
+    end
+  end
+
+  defp decode_rollback_message(_state, value) when is_binary(value), do: value
+  defp decode_rollback_message(_state, value) when is_number(value), do: to_string(value)
+  defp decode_rollback_message(_state, true), do: "true"
+  defp decode_rollback_message(_state, false), do: "false"
+  defp decode_rollback_message(_state, nil), do: "transaction rolled back"
+
+  defp decode_rollback_message(state, value) do
+    case state |> Lua.decode!(value) |> Encoder.decode_input() do
+      %{"message" => m} when is_binary(m) -> m
+      _ -> "transaction rolled back"
+    end
+  end
+
+  defp handle_transaction([resources_arg, fn_ref | _], state, lookup) do
+    resources_value = state |> Lua.decode!(resources_arg) |> Encoder.decode_input()
+
+    with {:ok, names} <- normalize_resource_names(resources_value),
+         {:ok, modules} <- resolve_resource_modules(names, lookup) do
+      run_transaction(modules, fn_ref, state)
+    else
+      {:error, %AshLua.Errors.FieldsError{} = err} ->
+        encode_error_response(state, err)
+    end
+  end
+
+  defp handle_transaction(_args, state, _lookup) do
+    encode_error_response(state, %AshLua.Errors.FieldsError{
+      message: "utils.transaction(resources, function) — expected (list, function)",
+      short_message: "invalid call",
+      code: "invalid_transaction_call",
+      fields: [],
+      vars: %{}
+    })
+  end
+
+  defp normalize_resource_names(value) when is_list(value) do
+    if Enum.all?(value, &is_binary/1) do
+      {:ok, value}
+    else
+      {:error,
+       %AshLua.Errors.FieldsError{
+         message: "utils.transaction expects a list of resource path strings",
+         short_message: "invalid resources",
+         code: "invalid_transaction_resources",
+         fields: [],
+         vars: %{}
+       }}
+    end
+  end
+
+  defp normalize_resource_names(_) do
+    {:error,
+     %AshLua.Errors.FieldsError{
+       message: "utils.transaction expects a list of resource path strings",
+       short_message: "invalid resources",
+       code: "invalid_transaction_resources",
+       fields: [],
+       vars: %{}
+     }}
+  end
+
+  defp resolve_resource_modules(names, lookup) do
+    Enum.reduce_while(names, {:ok, []}, fn name, {:ok, acc} ->
+      with {:ok, module} <- Map.fetch(lookup, name),
+           true <- transactional?(module) do
+        {:cont, {:ok, [module | acc]}}
+      else
+        :error ->
+          {:halt,
+           {:error,
+            %AshLua.Errors.FieldsError{
+              message: "unknown resource `#{name}`",
+              short_message: "unknown resource",
+              code: "unknown_resource",
+              fields: [],
+              vars: %{"name" => name}
+            }}}
+
+        false ->
+          {:halt,
+           {:error,
+            %AshLua.Errors.FieldsError{
+              message: "record type `#{name}` does not support transactions",
+              short_message: "not transactional",
+              code: "not_transactional",
+              fields: [],
+              vars: %{"name" => name}
+            }}}
+      end
+    end)
+    |> case do
+      {:ok, mods} -> {:ok, Enum.reverse(mods)}
+      err -> err
+    end
+  end
+
+  defp transactional?(module) do
+    Ash.DataLayer.data_layer_can?(module, :transact)
+  end
+
+  defp run_transaction(modules, fn_ref, state) do
+    parent = self()
+    # Per-call ref so we never pick up someone else's `{:tx_state, _}` /
+    # `{:tx_lua_error, _}` message — both sends below carry the same ref and
+    # the receives below match only on it.
+    ref = make_ref()
+
+    try do
+      result =
+        Ash.transact(modules, fn ->
+          case Lua.call_function(state, fn_ref, []) do
+            {:ok, values, new_state} ->
+              send(parent, {:tx_state, ref, new_state})
+              # Wrap so Ash.transact doesn't treat the body's `{:error, _}`
+              # convention-return as a rollback signal — only raises and
+              # action-side errors should roll back.
+              {:body_ok, values}
+
+            {:error, reason, new_state} ->
+              # Stash both the state AND the original Lua error tuple. The
+              # data layer's rollback wrapper calls `Mnesia.abort/1` on our
+              # `{:error, reason}` return; Mnesia's transaction catch then
+              # `Exception.format_exit/1`s the tuple to a string before
+              # wrapping it as `Ash.Error.Unknown`, so we can't recover the
+              # original from the result. Forwarding it here lets us decode
+              # the raised table back into a structured envelope.
+              send(parent, {:tx_state, ref, new_state})
+              send(parent, {:tx_lua_error, ref, reason})
+              {:error, reason}
+          end
+        end)
+
+      new_state =
+        receive do
+          {:tx_state, ^ref, s} -> s
+        after
+          0 -> state
+        end
+
+      captured_lua_error =
+        receive do
+          {:tx_lua_error, ^ref, e} -> e
+        after
+          0 -> nil
+        end
+
+      case {result, captured_lua_error} do
+        {{:ok, {:body_ok, values}}, _} ->
+          # Pass through every value the body returned plus a trailing nil
+          # for the err slot, so the caller can pattern-match `local v, e =
+          # utils.transaction(...)` consistently with the rest of the
+          # surface.
+          {values ++ [nil], new_state}
+
+        {{:ok, {:body_ok, values}, _notifications}, _} ->
+          {values ++ [nil], new_state}
+
+        {{:error, _ash_error}, lua_error} when not is_nil(lua_error) ->
+          # Rollback was triggered by a Lua-side error; we stashed the
+          # original tuple before Mnesia's exit-formatting wrapped it.
+          encode_lua_transaction_error(new_state, lua_error)
+
+        {{:error, ash_error}, _} ->
+          {encoded, st} = Lua.encode!(new_state, Encoder.encode_error(ash_error))
+          {[nil, encoded], st}
+      end
+    after
+      # Drain any tx-tagged messages we didn't pick up — e.g. if an
+      # exception jumped past our receives. Without this they'd linger in
+      # the parent's mailbox forever.
+      drain_tx_messages(ref)
+    end
+  end
+
+  defp drain_tx_messages(ref) do
+    receive do
+      {:tx_state, ^ref, _} -> drain_tx_messages(ref)
+      {:tx_lua_error, ^ref, _} -> drain_tx_messages(ref)
+    after
+      0 -> :ok
+    end
+  end
+
+  defp encode_lua_transaction_error(state, {:assert_error, value}) do
+    encode_lua_transaction_error_body(state, value)
+  end
+
+  defp encode_lua_transaction_error(state, {:error_call, [value | _]}) do
+    encode_lua_transaction_error_body(state, value)
+  end
+
+  # `:luerl_lib.lua_error/2` (used by our `utils.transaction.rollback`
+  # callback) raises with the encoded value directly, so the captured error
+  # reason is a bare `{:tref, _}` rather than one of the wrapped shapes
+  # above.
+  defp encode_lua_transaction_error(state, {:tref, _} = tref) do
+    encode_lua_transaction_error_body(state, tref)
+  end
+
+  defp encode_lua_transaction_error(state, _other) do
+    err = %{
+      "class" => "invalid",
+      "errors" => [
+        %{
+          "message" => "transaction rolled back due to a Lua error",
+          "short_message" => "lua_error",
+          "code" => "lua_error",
+          "fields" => [],
+          "vars" => %{}
+        }
+      ]
+    }
+
+    {encoded, st} = Lua.encode!(state, err)
+    {[nil, encoded], st}
+  end
+
+  defp encode_lua_transaction_error_body(state, value) do
+    decoded =
+      try do
+        Lua.decode!(state, value)
+      rescue
+        _ -> nil
+      end
+
+    envelope =
+      case decoded do
+        list when is_list(list) ->
+          case Encoder.decode_input(list) do
+            # Already a full envelope (e.g. an err table the script
+            # propagated from a failed action call via `assert(...)`).
+            %{"class" => _, "errors" => _} = env ->
+              env
+
+            # A user-raised table that looks like a single leaf error
+            # (typical from `error({ code = ..., message = ... })`). Wrap
+            # it as the single entry in a fresh envelope.
+            %{} = leaf ->
+              wrap_user_leaf(leaf)
+
+            other ->
+              wrap_user_value(other)
+          end
+
+        nil ->
+          nil
+
+        other ->
+          wrap_user_value(other)
+      end
+
+    case envelope do
+      nil ->
+        encode_lua_transaction_error(state, :unknown)
+
+      env ->
+        {encoded, st} = Lua.encode!(state, env)
+        {[nil, encoded], st}
+    end
+  end
+
+  defp wrap_user_leaf(leaf) when is_map(leaf) do
+    %{
+      "class" => "invalid",
+      "errors" => [
+        %{
+          "message" => Map.get(leaf, "message") || "lua error",
+          "short_message" => Map.get(leaf, "short_message") || "lua error",
+          "code" => Map.get(leaf, "code") || "lua_error",
+          "fields" => Map.get(leaf, "fields") || [],
+          "vars" => Map.drop(leaf, ["message", "short_message", "code", "fields"])
+        }
+      ]
+    }
+  end
+
+  # A non-map raise — typically `error("some string")`. Surface the value as
+  # the message of a single leaf entry.
+  defp wrap_user_value(value) do
+    %{
+      "class" => "invalid",
+      "errors" => [
+        %{
+          "message" => to_message_string(value),
+          "short_message" => "lua error",
+          "code" => "lua_error",
+          "fields" => [],
+          "vars" => %{}
+        }
+      ]
+    }
+  end
+
+  defp to_message_string(value) when is_binary(value), do: value
+  defp to_message_string(value) when is_number(value), do: to_string(value)
+  defp to_message_string(true), do: "true"
+  defp to_message_string(false), do: "false"
+  defp to_message_string(nil), do: "lua error"
+  defp to_message_string(_other), do: "lua error"
 
   defp build_action_callback(resource, action, manifest) do
     fn args, state ->

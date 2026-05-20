@@ -14,5 +14,6 @@ defmodule AshLua.Test.Posts do
     resource AshLua.Test.Posts.Comment
     resource AshLua.Test.Posts.MCPActions
     resource AshLua.Test.Posts.CustomMCPActions
+    resource AshLua.Test.Posts.MnesiaNote
   end
 end

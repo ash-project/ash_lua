@@ -149,6 +149,85 @@ defmodule AshLua.Docs do
     as "unknown". `more?` is the cheap, always-available signal for whether
     paging forward would yield more.
     """,
+    "transactions" => """
+    <a id="topic-transactions"></a>
+    # Transactions
+
+    Wrap a block of operations in a transaction with
+    `utils.transaction.transact`:
+
+    ```lua
+    utils.transaction.transact({ "posts.post", "posts.comment" }, function()
+      local post = assert(posts.post.create({ title = "Hello" }))
+      assert(posts.comment.create({ post_id = post.id, body = "First" }))
+      return post.id
+    end)
+    ```
+
+    The first argument is the list of record-type paths that the transaction
+    should cover — the same paths listed under `## Record types`. The second
+    argument is a Lua function with no arguments.
+
+    The call returns `(result, err)`:
+
+      * On commit, `result` is whatever the inner function returned and
+        `err` is `nil`.
+      * On rollback, `result` is `nil` and `err` is the standard error
+        envelope.
+
+    Rollback happens when:
+
+      * The body raises (typically via `assert(...)` on a failed operation,
+        which raises with the operation's err table).
+      * Any operation called inside the body fails — even if the script
+        doesn't `assert`, an operation failure aborts the transaction.
+      * The body calls `utils.transaction.rollback(message)` to abort
+        explicitly.
+
+    Example with `assert`-driven rollback:
+
+    ```lua
+    local _, err = utils.transaction.transact({ "posts.post" }, function()
+      assert(posts.post.create({ title = "Will Roll Back" }))
+      assert(posts.post.create({ })) -- missing required `title`, raises
+    end)
+
+    if err then
+      -- Neither post exists; the whole transaction was rolled back.
+    end
+    ```
+
+    Example with explicit rollback:
+
+    ```lua
+    local _, err = utils.transaction.transact({ "posts.post" }, function()
+      local p = assert(posts.post.create({ title = "Tentative" }))
+      if not some_business_check(p) then
+        utils.transaction.rollback("post failed business check")
+      end
+      return p.id
+    end)
+
+    -- err.errors[1].code == "rolled_back"
+    -- err.errors[1].message == "post failed business check"
+    ```
+
+    `utils.transaction.rollback(message)` aborts the surrounding transaction
+    immediately. The `message` argument is optional and may be a string or
+    a table with a `message` key. Calling it outside a transaction body has
+    the same effect as raising a Lua error.
+
+    Notes:
+
+      * Pass only record types from the scoped surface (the ones listed under
+        `## Record types`).
+      * Not every record type can participate in a transaction; pass the
+        ones that operations actually touch and the host figures out the
+        right grouping.
+      * The actor, tenant, and context configured for the script remain in
+        effect inside the transaction body — they're host-supplied and not
+        affected by the transaction call.
+    """,
     "error-handling" => """
     <a id="topic-error-handling"></a>
     # Error handling
@@ -221,6 +300,7 @@ defmodule AshLua.Docs do
   @topic_titles %{
     "filters" => "Filters",
     "pagination" => "Pagination",
+    "transactions" => "Transactions",
     "error-handling" => "Error handling"
   }
 

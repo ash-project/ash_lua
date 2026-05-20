@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.1.1](https://github.com/ash-project/ash_lua/compare/v0.1.0...v0.1.1) (2026-05-20)
+
+
+
+
+### Improvements:
+
+* transactions ð by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.1.0](https://github.com/ash-project/ash_lua/compare/v0.1.0...v0.1.0) (2026-05-18)
 
 

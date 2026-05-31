@@ -140,6 +140,10 @@ defmodule AshLua.Encoder do
       when is_atom(m) and is_atom(f) and (is_integer(a) or is_atom(a)),
       do: %{"opaque" => "function"}
 
+  # An installed Erlang/Elixir callback (e.g. our overridden `print`) decodes
+  # as a bare Erlang fun on the way back out. Same opaque marker.
+  def encode_result(value) when is_function(value), do: %{"opaque" => "function"}
+
   # Any other Erlang tuple shouldn't normally appear in a Lua-decoded result,
   # but the eval action's `:term` slot can carry one when an Ash action
   # returns a tuple (e.g. a `:tuple`-typed attribute that bypassed the

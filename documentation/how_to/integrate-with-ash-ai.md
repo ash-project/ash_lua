@@ -209,8 +209,9 @@ actions need a stable return shape, the synthesized `:eval` action's
 
 ```elixir
 %{
-  result: <encoded Lua value, or nil on error>,
-  error:  <%{ message, errors: [...] } or nil>
+  result:       <encoded Lua value, or nil on error>,
+  error:        <%{ class, errors: [...] } or nil>,
+  print_output: [<line>, ...]
 }
 ```
 
@@ -218,6 +219,11 @@ A successful script run populates `result` and leaves `error` nil; a failed
 script run does the opposite. This mirrors the in-script `(result, err)`
 convention so the LLM's reasoning about success/failure looks the same at
 both layers.
+
+`print_output` collects anything the script printed with Lua's built-in
+`print(...)`, in call order — useful for the model to leave itself
+breadcrumbs while a script runs. See the `print-output` topic via `:docs`
+for details.
 
 ## What `:docs` returns
 

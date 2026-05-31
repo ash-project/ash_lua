@@ -228,6 +228,20 @@ defmodule AshLua.Docs do
         effect inside the transaction body — they're host-supplied and not
         affected by the transaction call.
     """,
+    "print-output" => """
+    <a id="topic-print-output"></a>
+    # Print output
+
+    Anything you `print(...)` from your script comes back in the response
+    as a `print_output` list, one entry per call, in call order.
+
+    ```lua
+    print("looking up post")
+    print("got post", post.id)
+    ```
+
+    → `print_output = { "looking up post", "got post\\t<id>" }`
+    """,
     "error-handling" => """
     <a id="topic-error-handling"></a>
     # Error handling
@@ -301,6 +315,7 @@ defmodule AshLua.Docs do
     "filters" => "Filters",
     "pagination" => "Pagination",
     "transactions" => "Transactions",
+    "print-output" => "Print output",
     "error-handling" => "Error handling"
   }
 

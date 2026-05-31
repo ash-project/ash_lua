@@ -54,13 +54,64 @@ defmodule AshLua.Runtime do
     private = %{
       actor: Keyword.get(opts, :actor),
       tenant: Keyword.get(opts, :tenant),
-      context: Keyword.get(opts, :context, %{})
+      context: Keyword.get(opts, :context, %{}),
+      print_output: []
     }
 
     lua
     |> Lua.put_private(@private_key, private)
+    |> install_print_capture()
     |> install_entrypoints(manifest)
     |> install_utils(manifest)
+  end
+
+  @doc """
+  Returns the lines captured from Lua `print(...)` calls since the VM was
+  built, in call order.
+  """
+  @spec print_output(Lua.t()) :: [String.t()]
+  def print_output(%Lua{} = lua) do
+    case Lua.get_private(lua, @private_key) do
+      {:ok, %{print_output: lines}} when is_list(lines) -> lines
+      _ -> []
+    end
+  end
+
+  defp install_print_capture(lua) do
+    Lua.set!(lua, [:print], fn args, state ->
+      line = Enum.map_join(args, "\t", &format_print_arg(state, &1))
+      state = append_print(state, line)
+      {[], state}
+    end)
+  end
+
+  defp format_print_arg(_state, nil), do: "nil"
+  defp format_print_arg(_state, true), do: "true"
+  defp format_print_arg(_state, false), do: "false"
+  defp format_print_arg(_state, value) when is_binary(value), do: value
+  defp format_print_arg(_state, value) when is_number(value), do: to_string(value)
+
+  defp format_print_arg(state, {:tref, _} = tref) do
+    Lua.Table.as_string(Lua.decode!(state, tref))
+  rescue
+    _ -> "<table>"
+  end
+
+  defp format_print_arg(_state, {:funref, _, _}), do: "<function>"
+  defp format_print_arg(_state, {:erl_func, _}), do: "<function>"
+  defp format_print_arg(_state, {:erl_mfa, _, _, _}), do: "<function>"
+  defp format_print_arg(_state, {:usdref, _}), do: "<userdata>"
+  defp format_print_arg(_state, value), do: inspect(value)
+
+  defp append_print(state, line) do
+    case Lua.get_private(state, @private_key) do
+      {:ok, private} ->
+        buffer = (private[:print_output] || []) ++ [line]
+        Lua.put_private(state, @private_key, %{private | print_output: buffer})
+
+      _ ->
+        Lua.put_private(state, @private_key, %{print_output: [line]})
+    end
   end
 
   @doc """

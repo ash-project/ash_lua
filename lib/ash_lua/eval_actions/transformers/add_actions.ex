@@ -28,7 +28,8 @@ defmodule AshLua.EvalActions.Transformers.AddActions do
         constraints: [
           fields: [
             result: [type: :term, allow_nil?: true],
-            error: [type: :map, allow_nil?: true]
+            error: [type: :map, allow_nil?: true],
+            print_output: [type: {:array, :string}, allow_nil?: true]
           ]
         ],
         arguments: [script_arg],

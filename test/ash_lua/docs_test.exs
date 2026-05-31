@@ -28,6 +28,7 @@ defmodule AshLua.DocsTest do
                "error-handling",
                "filters",
                "pagination",
+               "print-output",
                "transactions"
              ]
     end

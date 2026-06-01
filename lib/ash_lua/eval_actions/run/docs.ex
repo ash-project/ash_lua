@@ -23,13 +23,9 @@ defmodule AshLua.EvalActions.Run.Docs do
 
   use Ash.Resource.Actions.Implementation
 
-  alias AshLua.EvalActions.Info
-
   @impl true
   def run(input, _opts, _context) do
     resource = input.resource
-    otp_app = Info.otp_app(resource)
-    entrypoints = Info.action_entrypoints(resource)
 
     name = Map.get(input.arguments, :name)
     search = Map.get(input.arguments, :search)
@@ -41,8 +37,7 @@ defmodule AshLua.EvalActions.Run.Docs do
          message: "`name` and `search` are mutually exclusive — pass at most one"
        )}
     else
-      with {:ok, manifest} <-
-             Ash.Info.Manifest.generate(otp_app: otp_app, action_entrypoints: entrypoints) do
+      with {:ok, manifest} <- AshLua.Surface.for_eval_resource(resource) do
         dispatch(manifest, name, search)
       end
     end

@@ -17,17 +17,12 @@ defmodule AshLua.EvalActions.Run.Eval do
 
   use Ash.Resource.Actions.Implementation
 
-  alias AshLua.EvalActions.Info
-
   @impl true
   def run(input, _opts, context) do
     script = input.arguments.script
     resource = input.resource
-    otp_app = Info.otp_app(resource)
-    entrypoints = Info.action_entrypoints(resource)
 
-    with {:ok, manifest} <-
-           Ash.Info.Manifest.generate(otp_app: otp_app, action_entrypoints: entrypoints) do
+    with {:ok, manifest} <- AshLua.Surface.for_eval_resource(resource) do
       do_run(script, manifest, context)
     end
   end

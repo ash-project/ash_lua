@@ -330,7 +330,7 @@ defmodule AshLua.Docs do
     manifest = ensure_manifest(manifest_or_opts)
 
     manifest.entrypoints
-    |> Enum.flat_map(&entrypoint_path/1)
+    |> Enum.map(&AshLua.Surface.path_string/1)
     |> Enum.sort()
   end
 
@@ -412,8 +412,8 @@ defmodule AshLua.Docs do
     manifest = ensure_manifest(manifest_or_opts)
 
     case find_callable(manifest, path) do
-      {:ok, {entrypoint, domain_name, resource_name}} ->
-        {:ok, render_callable(manifest, entrypoint, domain_name, resource_name)}
+      {:ok, surface_action} ->
+        {:ok, render_callable(manifest, surface_action)}
 
       :error ->
         {:error, :not_found}
@@ -647,23 +647,20 @@ defmodule AshLua.Docs do
       * `operation` — summarize the result set instead of returning records:
         `"count"`, `"exists"`, or `{ "sum" | "avg" | "min" | "max" | "count" |
         "list" | "first", "<field>" }` (list operations only).
+
+    Record type identifiers are documentation identifiers, not necessarily
+    callable Lua namespaces. A flattened callable such as `surface.page_list`
+    can still return a record documented as `surface.page`.
     """
     |> String.trim_trailing()
   end
 
-  defp ensure_manifest(%Manifest{} = m), do: m
+  defp ensure_manifest(%Manifest{} = m), do: AshLua.Surface.for_manifest(m)
 
   defp ensure_manifest(opts) when is_list(opts) do
-    {:ok, manifest} = Manifest.generate(opts)
+    otp_app = Keyword.fetch!(opts, :otp_app)
+    {:ok, manifest} = AshLua.Surface.for_otp_app(otp_app, Keyword.delete(opts, :otp_app))
     manifest
-  end
-
-  defp entrypoint_path(%Manifest.Entrypoint{resource: resource, action: action}) do
-    if AshLua.Resource.Info.expose?(resource) do
-      [resource_path(resource) <> "." <> Atom.to_string(action.name)]
-    else
-      []
-    end
   end
 
   defp record_type_identifier(%Manifest.Resource{module: module}) do
@@ -680,24 +677,7 @@ defmodule AshLua.Docs do
   end
 
   defp find_callable(manifest, path) do
-    Enum.reduce_while(manifest.entrypoints, :error, fn entrypoint, _acc ->
-      if AshLua.Resource.Info.expose?(entrypoint.resource) do
-        domain = Ash.Resource.Info.domain(entrypoint.resource)
-        domain_name = AshLua.Domain.Info.name(domain)
-        resource_name = AshLua.Resource.Info.name(entrypoint.resource)
-
-        candidate =
-          domain_name <> "." <> resource_name <> "." <> Atom.to_string(entrypoint.action.name)
-
-        if candidate == path do
-          {:halt, {:ok, {entrypoint, domain_name, resource_name}}}
-        else
-          {:cont, :error}
-        end
-      else
-        {:cont, :error}
-      end
-    end)
+    AshLua.Surface.find_entrypoint(manifest, path)
   end
 
   defp find_resource_by_path(manifest, path) do
@@ -711,17 +691,15 @@ defmodule AshLua.Docs do
     end)
   end
 
-  defp render_callable(manifest, entrypoint, domain_name, resource_name) do
+  defp render_callable(manifest, entrypoint) do
     resource_module = entrypoint.resource
     action = entrypoint.action
     resource = Manifest.get_resource!(Manifest.resource_lookup(manifest), resource_module)
     type_lookup = Manifest.type_lookup(manifest)
     resource_lookup = Manifest.resource_lookup(manifest)
 
-    path = domain_name <> "." <> resource_name <> "." <> Atom.to_string(action.name)
-
     [
-      "# `#{path}`",
+      "# `#{AshLua.Surface.path_string(entrypoint)}`",
       "**Operation:** `#{operation_kind(action)}`",
       action_description(action),
       input_section(action, resource, resource_lookup, type_lookup),
@@ -1273,13 +1251,7 @@ defmodule AshLua.Docs do
   defp collect_search_candidates(manifest) do
     callables =
       manifest.entrypoints
-      |> Enum.flat_map(fn entrypoint ->
-        if AshLua.Resource.Info.expose?(entrypoint.resource) do
-          [callable_candidate(entrypoint)]
-        else
-          []
-        end
-      end)
+      |> Enum.map(&callable_candidate/1)
 
     record_types =
       manifest.resources
@@ -1294,21 +1266,21 @@ defmodule AshLua.Docs do
     named_types = Enum.map(manifest.types, &named_type_candidate/1)
     topics = Enum.map(@topic_ids, &topic_candidate/1)
 
-    callables ++ record_types ++ named_types ++ topics
+    record_types ++ callables ++ named_types ++ topics
   end
 
   defp callable_candidate(%Manifest.Entrypoint{} = entrypoint) do
     %{
-      id: resource_path(entrypoint.resource) <> "." <> Atom.to_string(entrypoint.action.name),
+      id: AshLua.Surface.path_string(entrypoint),
       kind: "operation",
       summary: callable_summary(entrypoint)
     }
   end
 
-  defp callable_summary(%Manifest.Entrypoint{action: action, resource: resource}) do
+  defp callable_summary(%Manifest.Entrypoint{action: action} = entrypoint) do
     case action.description do
-      nil -> "#{operation_kind(action)} operation on `#{resource_path(resource)}`"
-      "" -> "#{operation_kind(action)} operation on `#{resource_path(resource)}`"
+      nil -> "#{operation_kind(action)} operation `#{AshLua.Surface.path_string(entrypoint)}`"
+      "" -> "#{operation_kind(action)} operation `#{AshLua.Surface.path_string(entrypoint)}`"
       desc -> desc
     end
   end
@@ -1357,10 +1329,13 @@ defmodule AshLua.Docs do
   defp score_candidate(%{id: id, summary: summary}, needle) do
     id_l = String.downcase(id)
     sum_l = summary |> to_string() |> String.downcase()
+    segments = String.split(id_l, ".")
 
     cond do
       id_l == needle -> 1000
-      String.starts_with?(id_l, needle) -> 800
+      String.starts_with?(id_l, needle <> ".") -> 800
+      needle in segments -> 700
+      String.starts_with?(id_l, needle) -> 600
       String.contains?(id_l, needle) -> 500
       String.contains?(sum_l, needle) -> 100
       true -> 0

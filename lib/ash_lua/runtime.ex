@@ -41,11 +41,11 @@ defmodule AshLua.Runtime do
     manifest =
       case Keyword.fetch(opts, :manifest) do
         {:ok, %Manifest{} = m} ->
-          m
+          AshLua.Surface.for_manifest(m)
 
         :error ->
           otp_app = Keyword.fetch!(opts, :otp_app)
-          {:ok, m} = Manifest.generate(otp_app: otp_app)
+          {:ok, m} = AshLua.Surface.for_otp_app(otp_app)
           m
       end
 
@@ -61,7 +61,7 @@ defmodule AshLua.Runtime do
     lua
     |> Lua.put_private(@private_key, private)
     |> install_print_capture()
-    |> install_entrypoints(manifest)
+    |> install_surface(manifest)
     |> install_utils(manifest)
   end
 
@@ -126,36 +126,36 @@ defmodule AshLua.Runtime do
     Lua.eval!(lua, script, script_opts)
   end
 
-  defp install_entrypoints(lua, %Manifest{} = manifest) do
-    manifest.entrypoints
-    |> Enum.group_by(& &1.resource)
-    |> Enum.reduce(lua, fn {resource, eps_for_resource}, lua ->
-      install_resource(lua, resource, eps_for_resource, manifest)
+  defp install_surface(lua, %Manifest{entrypoints: entrypoints} = manifest) do
+    lua =
+      entrypoints
+      |> Enum.flat_map(&path_prefixes(parent_path(AshLua.Surface.path(&1))))
+      |> Enum.uniq()
+      |> Enum.sort_by(&length/1)
+      |> Enum.reduce(lua, fn path, lua ->
+        Lua.set!(lua, path, %{})
+      end)
+
+    Enum.reduce(entrypoints, lua, fn entrypoint, lua ->
+      callback =
+        build_action_callback(
+          entrypoint.resource,
+          entrypoint.action,
+          manifest
+        )
+
+      Lua.set!(lua, AshLua.Surface.path(entrypoint), callback)
     end)
   end
 
-  defp install_resource(lua, resource, entrypoints, manifest) do
-    if AshLua.Resource.Info.expose?(resource) do
-      domain = Ash.Resource.Info.domain(resource)
-      domain_name = AshLua.Domain.Info.name(domain)
-      resource_name = AshLua.Resource.Info.name(resource)
+  defp parent_path([_action]), do: []
+  defp parent_path(path), do: Enum.drop(path, -1)
 
-      # Pre-seed `[domain, resource]` as an empty table so each deep
-      # `Lua.set!/3` for an action can walk through it. Without this,
-      # the second resource under a shared domain trips `invalid_index`
-      # because luerl halts traversal at the first existing prefix
-      # (`[domain]`) and then can't materialize the missing parent.
-      lua = Lua.set!(lua, [domain_name, resource_name], %{})
+  defp path_prefixes([]), do: []
 
-      Enum.reduce(entrypoints, lua, fn entrypoint, lua ->
-        action_name = Atom.to_string(entrypoint.action.name)
-        path = [domain_name, resource_name, action_name]
-        callback = build_action_callback(resource, entrypoint.action, manifest)
-        Lua.set!(lua, path, callback)
-      end)
-    else
-      lua
-    end
+  defp path_prefixes(path) do
+    1..length(path)
+    |> Enum.map(&Enum.take(path, &1))
   end
 
   defp install_utils(lua, %Manifest{} = manifest) do

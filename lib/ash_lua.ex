@@ -7,9 +7,10 @@ defmodule AshLua do
   AshLua exposes Ash actions to Lua scripts evaluated through the [`lua`](https://hex.pm/packages/lua)
   Elixir package, ensuring a consistent actor / tenant / context are propagated into every Ash call.
 
-  The Lua surface is derived from `Ash.Info.Manifest.generate/1` — every public action becomes a
-  callable at `<domain>.<resource>.<action>` (names overridable via the `AshLua.Domain` and
-  `AshLua.Resource` DSL extensions).
+  The Lua surface is resolved from `Ash.Info.Manifest.generate/1` plus AshLua DSL. Domains with no
+  explicit `lua do namespace ... end` config keep the legacy
+  `<domain>.<resource>.<action>` callable shape; domains with explicit namespaces expose only their
+  configured public action paths.
 
   ## Example
 

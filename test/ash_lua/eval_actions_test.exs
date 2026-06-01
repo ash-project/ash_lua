@@ -156,14 +156,34 @@ defmodule AshLua.EvalActionsTest do
   end
 
   describe "synthesized :docs action" do
-    test "with no name returns the full scoped markdown page" do
+    test "with no name returns a compact index, not the full page" do
       input = Ash.ActionInput.for_action(MCPActions, :docs, %{})
+
+      assert {:ok, md} = Ash.run_action(input)
+      assert md =~ "# API reference"
+      # The index lists ids as bullets, not as full pages with bodies.
+      assert md =~ "- `posts.post.read`"
+      assert md =~ "- `posts.post.create`"
+      assert md =~ "- `posts.comment.read`"
+      refute md =~ "# `posts.post.read`"
+      refute md =~ "## Returns"
+      # It hints how to get more and how big the full page is.
+      assert md =~ "name = \"full\""
+      assert md =~ "characters"
+      # Out-of-scope actions are not in the index.
+      refute md =~ "posts.comment.create"
+      refute md =~ "posts.user.read"
+    end
+
+    test "with name = \"full\" returns the full scoped markdown page" do
+      input = Ash.ActionInput.for_action(MCPActions, :docs, %{name: "full"})
 
       assert {:ok, md} = Ash.run_action(input)
       assert md =~ "# API reference"
       assert md =~ "# `posts.post.read`"
       assert md =~ "# `posts.post.create`"
       assert md =~ "# `posts.comment.read`"
+      assert md =~ "## Returns"
       # Out-of-scope actions are not in the docs.
       refute md =~ "# `posts.comment.create`"
       refute md =~ "# `posts.user.read`"

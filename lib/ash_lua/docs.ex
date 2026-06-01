@@ -20,6 +20,8 @@ defmodule AshLua.Docs do
     * `callable_doc/2` renders one operation (e.g. `"posts.post.create"`).
     * `type_doc/2` renders one type (record type identified by its Lua path
       `"posts.post"`, or named type by its readable name).
+    * `index_doc/1` renders a compact index — one bullet per operation, type,
+      and topic — as the zero-argument landing page.
     * `full_doc/1` concatenates everything into a single page.
   """
 
@@ -466,6 +468,90 @@ defmodule AshLua.Docs do
   end
 
   @doc """
+  Renders a compact index of the scoped surface: a short preamble, the
+  reserved input keys, and a bulleted list of every operation, record type,
+  named type, and topic — each with a one-line summary, but no field tables or
+  bodies.
+
+  This is the zero-argument landing page. It is intentionally small: pick an id
+  from the list and follow up with `name` set to that id for the full page, or
+  use `search/2` to filter. Empty sections are omitted.
+  """
+  @spec index_doc(manifest_or_opts()) :: String.t()
+  def index_doc(manifest_or_opts) do
+    manifest = ensure_manifest(manifest_or_opts)
+    candidates = collect_search_candidates(manifest)
+
+    operations = Enum.filter(candidates, &(&1.kind == "operation"))
+    record_types = Enum.filter(candidates, &(&1.kind == "record type"))
+    topics = Enum.filter(candidates, &(&1.kind == "topic"))
+    named_types = Enum.reject(candidates, &(&1.kind in ["operation", "record type", "topic"]))
+
+    [
+      index_preamble(full_doc_size_hint(manifest)),
+      index_group("Topics", topics),
+      index_group("Operations", operations),
+      index_group("Record types", record_types),
+      index_group("Named types", named_types)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n\n")
+  end
+
+  # A rough sense of how big `name = "full"` would be, so a caller can decide
+  # whether to pull the whole page or drill in. We render it to measure rather
+  # than estimate, then summarize — the cost is one render, not one round-trip.
+  defp full_doc_size_hint(manifest) do
+    chars = manifest |> full_doc() |> byte_size()
+    approx_tokens = div(chars, 4)
+
+    "~#{delimit(chars)} characters (≈#{delimit(approx_tokens)} tokens)"
+  end
+
+  defp delimit(n) when is_integer(n) do
+    n
+    |> Integer.to_string()
+    |> String.reverse()
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
+    |> String.reverse()
+  end
+
+  defp index_preamble(full_size_hint) do
+    """
+    # API reference
+
+    Every operation below is callable from a Lua script and returns
+    `(result, err)` — success yields the result with `err == nil`, failure
+    yields `(nil, err)`. Wrap a call in `assert(...)` for raise semantics.
+
+    This is an index of the scoped surface. To read the full page for any
+    entry, call this tool again with `name` set to one of the ids listed below
+    (an operation, record type, named type, or topic). To filter the index by
+    keyword, call with `search` set to a term.
+
+    To pull every page at once, call with `name = "full"` — but note the full
+    document is large: #{full_size_hint}. Prefer `search` or a specific `name`
+    unless you really need everything.
+
+    #{reserved_input_keys()}
+    """
+    |> String.trim_trailing()
+  end
+
+  defp index_group(_title, []), do: nil
+
+  defp index_group(title, candidates) do
+    bullets =
+      candidates
+      |> Enum.sort_by(& &1.id)
+      |> Enum.map_join("\n", fn %{id: id, summary: summary} ->
+        "- `#{id}` — #{summary}"
+      end)
+
+    "## #{title}\n\n#{bullets}"
+  end
+
+  @doc """
   Renders a single page containing every operation and every type.
 
   The "Named types" section is omitted when there are none.
@@ -540,6 +626,12 @@ defmodule AshLua.Docs do
     failed call returns `(nil, err)`. Wrap a call in `assert(...)` for raise
     semantics.
 
+    #{reserved_input_keys()}
+    """
+  end
+
+  defp reserved_input_keys do
+    """
     ## Reserved input keys
 
       * `fields` — which fields to return; selection tree (list of names and
@@ -556,6 +648,7 @@ defmodule AshLua.Docs do
         `"count"`, `"exists"`, or `{ "sum" | "avg" | "min" | "max" | "count" |
         "list" | "first", "<field>" }` (list operations only).
     """
+    |> String.trim_trailing()
   end
 
   defp ensure_manifest(%Manifest{} = m), do: m

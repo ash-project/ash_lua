@@ -13,8 +13,10 @@ defmodule AshLua.EvalActions.Run.Docs do
       discovery aid; follow up with the same action using `name` set to one
       of the returned ids.
     * **`name` set** — resolves against the scoped manifest and returns the
-      focused page (callable, record-type, named-type, or topic).
-    * **neither set** — returns the full scoped page (`AshLua.Docs.full_doc/1`).
+      focused page (callable, record-type, named-type, or topic). The reserved
+      name `"full"` returns the entire scoped page (`AshLua.Docs.full_doc/1`).
+    * **neither set** — returns a compact index of the scoped surface
+      (`AshLua.Docs.index_doc/1`).
 
   Passing both `name` and `search` is an error.
   """
@@ -51,6 +53,10 @@ defmodule AshLua.EvalActions.Run.Docs do
   end
 
   defp dispatch(manifest, name, _search) when name in [nil, ""] do
+    {:ok, AshLua.Docs.index_doc(manifest)}
+  end
+
+  defp dispatch(manifest, "full", _search) do
     {:ok, AshLua.Docs.full_doc(manifest)}
   end
 

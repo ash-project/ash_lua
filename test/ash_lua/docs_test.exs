@@ -292,6 +292,39 @@ defmodule AshLua.DocsTest do
     end
   end
 
+  describe "index_doc/1" do
+    test "lists every callable, record type, and topic as bullets without bodies" do
+      md = AshLua.Docs.index_doc(opts())
+
+      for path <- AshLua.Docs.list_callables(opts()) do
+        assert md =~ "- `#{path}`", "missing operation bullet: #{path}"
+      end
+
+      assert md =~ "## Operations"
+      assert md =~ "## Record types"
+      assert md =~ "## Topics"
+      assert md =~ "- `posts.post`"
+      assert md =~ "- `filters`"
+
+      # No per-page bodies leak into the index.
+      refute md =~ "## Returns"
+      refute md =~ "## Filterable fields"
+    end
+
+    test "hints how to fetch the full page and roughly how big it is" do
+      md = AshLua.Docs.index_doc(opts())
+
+      assert md =~ ~s(`name = "full"`)
+      assert md =~ "characters"
+      assert md =~ "tokens"
+    end
+
+    test "is dramatically smaller than the full page" do
+      assert byte_size(AshLua.Docs.index_doc(opts())) <
+               byte_size(AshLua.Docs.full_doc(opts()))
+    end
+  end
+
   describe "full_doc/1" do
     test "covers every callable and every record type" do
       md = AshLua.Docs.full_doc(opts())

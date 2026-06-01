@@ -7,4 +7,4 @@ import Config
 config :ash, policies: [show_policy_breakdowns?: true]
 
 config :ash_lua,
-  ash_domains: [AshLua.Test.Posts]
+  ash_domains: [AshLua.Test.Posts, AshLua.Test.Surface]

@@ -723,7 +723,7 @@ defmodule AshLua.Docs do
   defp input_section(action, resource, resource_lookup, type_lookup) do
     input_rows =
       (action.inputs || [])
-      |> Enum.map(&input_row(&1, resource_lookup, type_lookup))
+      |> Enum.map(&input_row(&1, action, resource, resource_lookup, type_lookup))
 
     pk_rows = pk_rows(action, resource)
     reserved_rows = reserved_rows(action)
@@ -742,8 +742,9 @@ defmodule AshLua.Docs do
     end
   end
 
-  defp input_row(%Manifest.Argument{} = input, resource_lookup, type_lookup) do
+  defp input_row(%Manifest.Argument{} = input, action, resource, resource_lookup, type_lookup) do
     required = if not input.allow_nil? and not input.has_default?, do: "yes", else: "no"
+    name = input_name(input, action, resource)
 
     notes =
       [
@@ -754,8 +755,19 @@ defmodule AshLua.Docs do
       |> Enum.reject(&(is_nil(&1) or &1 == ""))
       |> Enum.join("; ")
 
-    "| `#{input.name}` | #{type_link(input.type, resource_lookup, type_lookup)} | #{required} | #{notes} |"
+    "| `#{name}` | #{type_link(input.type, resource_lookup, type_lookup)} | #{required} | #{notes} |"
   end
+
+  defp input_name(
+         %Manifest.Argument{name: name},
+         %Manifest.Action{name: action_name, type: type},
+         resource
+       )
+       when type in [:read, :create, :update, :destroy, :action] do
+    AshLua.FieldNames.to_lua_input_name(resource.module, action_name, type, name)
+  end
+
+  defp input_name(%Manifest.Argument{name: name}, _action, _resource), do: name
 
   defp pk_rows(%Manifest.Action{type: type}, resource)
        when type in [:update, :delete, :destroy] do
@@ -766,7 +778,9 @@ defmodule AshLua.Docs do
           _ -> "_unknown_"
         end
 
-      "| `#{pk}` | #{type_text} | yes | identifies the record |"
+      lua_name = AshLua.FieldNames.to_lua_field_name(resource.module, pk)
+
+      "| `#{lua_name}` | #{type_text} | yes | identifies the record |"
     end)
   end
 
@@ -882,7 +896,11 @@ defmodule AshLua.Docs do
         d -> "\n\n" <> d
       end
 
-    primary_key_line = "**Primary key:** #{Enum.map_join(resource.primary_key, ", ", &"`#{&1}`")}"
+    primary_key_line =
+      "**Primary key:** " <>
+        Enum.map_join(resource.primary_key, ", ", fn field ->
+          "`#{AshLua.FieldNames.to_lua_field_name(resource.module, field)}`"
+        end)
 
     fields_section =
       case Manifest.Resource.all_fields(resource) do
@@ -892,7 +910,7 @@ defmodule AshLua.Docs do
         fields ->
           rows =
             Enum.map_join(fields, "\n", fn %Manifest.Field{} = f ->
-              row_field(f, resource_lookup, type_lookup)
+              row_field(resource, f, resource_lookup, type_lookup)
             end)
 
           "\n\n## Fields\n\n| Name | Type | Notes |\n|------|------|-------|\n" <> rows
@@ -907,7 +925,8 @@ defmodule AshLua.Docs do
           rows =
             Enum.map_join(rels, "\n", fn r ->
               dest = record_link(r.destination, resource_lookup)
-              "| `#{r.name}` | #{r.cardinality} | #{dest} |"
+              name = AshLua.FieldNames.to_lua_field_name(resource.module, r.name)
+              "| `#{name}` | #{r.cardinality} | #{dest} |"
             end)
 
           "\n\n## Related records\n\n| Name | Cardinality | Type |\n|------|-------------|------|\n" <>
@@ -941,7 +960,7 @@ defmodule AshLua.Docs do
       fields ->
         body =
           Enum.map_join(fields, "\n\n", fn field ->
-            field_filter_block(field, resource_lookup, type_lookup, op_display_map)
+            field_filter_block(resource, field, resource_lookup, type_lookup, op_display_map)
           end)
 
         "\n\n## Filterable fields\n\nThe `filter` reserved input on list operations accepts these per-field forms. See the **Filters** topic for the overall expression shape, including boolean combinators.\n\n" <>
@@ -949,12 +968,19 @@ defmodule AshLua.Docs do
     end
   end
 
-  defp field_filter_block(%Manifest.Field{} = field, resource_lookup, type_lookup, op_display_map) do
+  defp field_filter_block(
+         %Manifest.Resource{} = resource,
+         %Manifest.Field{} = field,
+         resource_lookup,
+         type_lookup,
+         op_display_map
+       ) do
     operators = field.filter_operators || []
     functions = field.filter_functions || []
     custom_exprs = field.filter_custom_expressions || []
 
-    header = "### `#{field.name}` (#{type_link(field.type, resource_lookup, type_lookup)})"
+    header =
+      "### `#{AshLua.FieldNames.to_lua_field_name(resource.module, field.name)}` (#{type_link(field.type, resource_lookup, type_lookup)})"
 
     lines =
       Enum.map(
@@ -1050,7 +1076,7 @@ defmodule AshLua.Docs do
       resource
       |> Manifest.Resource.all_fields()
       |> Enum.filter(& &1.sortable?)
-      |> Enum.map(& &1.name)
+      |> Enum.map(&AshLua.FieldNames.to_lua_field_name(resource.module, &1.name))
 
     case sortable do
       [] ->
@@ -1085,7 +1111,7 @@ defmodule AshLua.Docs do
         fields ->
           rows =
             Enum.map_join(fields, "\n", fn %Manifest.Field{} = f ->
-              row_field(f, resource_lookup, type_lookup)
+              row_field(resource, f, resource_lookup, type_lookup)
             end)
 
           "\n\n## Fields\n\n| Name | Type | Notes |\n|------|------|-------|\n" <> rows
@@ -1101,7 +1127,12 @@ defmodule AshLua.Docs do
     header <> "\n\n" <> body
   end
 
-  defp row_field(%Manifest.Field{} = f, resource_lookup, type_lookup) do
+  defp row_field(
+         %Manifest.Resource{} = resource,
+         %Manifest.Field{} = f,
+         resource_lookup,
+         type_lookup
+       ) do
     notes =
       [
         f.description,
@@ -1115,7 +1146,8 @@ defmodule AshLua.Docs do
       |> Enum.reject(&(is_nil(&1) or &1 == ""))
       |> Enum.join("; ")
 
-    "| `#{f.name}` | #{type_link(f.type, resource_lookup, type_lookup)} | #{notes} |"
+    name = AshLua.FieldNames.to_lua_field_name(resource.module, f.name)
+    "| `#{name}` | #{type_link(f.type, resource_lookup, type_lookup)} | #{notes} |"
   end
 
   defp kind_note(%Manifest.Field{kind: :calculation}), do: "computed"

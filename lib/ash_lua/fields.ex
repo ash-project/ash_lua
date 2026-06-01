@@ -117,15 +117,7 @@ defmodule AshLua.Fields do
 
   def parse(_), do: {:error, err("`fields` must be a list", "invalid_fields")}
 
-  defp parse_item(name) when is_binary(name) do
-    case to_field_atom(name) do
-      nil ->
-        {:error, err("unknown field `#{name}`", "unknown_field", [name], %{"name" => name})}
-
-      atom ->
-        {:ok, [{:simple, atom}]}
-    end
-  end
+  defp parse_item(name) when is_binary(name), do: {:ok, [{:simple, name}]}
 
   defp parse_item(name) when is_atom(name), do: {:ok, [{:simple, name}]}
 
@@ -156,17 +148,17 @@ defmodule AshLua.Fields do
   end
 
   defp parse_entry(key, value) do
-    case to_field_atom(key) do
-      nil ->
-        s = name_str(key)
-        {:error, err("unknown field `#{s}`", "unknown_field", [s], %{"name" => s})}
+    if is_binary(key) or is_atom(key) do
+      name = key
 
-      name ->
-        case parse_value(value) do
-          {:with_args, args, sub} -> {:ok, {:with_args, name, args, sub}}
-          {:nested, sub} -> {:ok, {:nested, name, sub}}
-          {:error, _} = err -> err
-        end
+      case parse_value(value) do
+        {:with_args, args, sub} -> {:ok, {:with_args, name, args, sub}}
+        {:nested, sub} -> {:ok, {:nested, name, sub}}
+        {:error, _} = err -> err
+      end
+    else
+      s = name_str(key)
+      {:error, err("unknown field `#{s}`", "unknown_field", [s], %{"name" => s})}
     end
   end
 
@@ -307,9 +299,9 @@ defmodule AshLua.Fields do
   defp select_for_resource(%Manifest.Resource{} = resource, :default, _ctx) do
     pk_template =
       resource.primary_key
-      |> Enum.map(fn name -> {:attr, name, :passthrough} end)
+      |> Enum.map(fn name -> {:attr, resource.module, name, :passthrough} end)
 
-    {resource.primary_key, [], {:resource, pk_template}}
+    {resource.primary_key, [], {:resource, resource.module, pk_template}}
   end
 
   defp select_for_resource(%Manifest.Resource{} = resource, ast, ctx) when is_list(ast) do
@@ -319,13 +311,16 @@ defmodule AshLua.Fields do
         {sel ++ sub_sel, ld ++ sub_ld, [entry | tmpl]}
       end)
 
-    {Enum.uniq(select), load, {:resource, Enum.reverse(template)}}
+    {Enum.uniq(select), load, {:resource, resource.module, Enum.reverse(template)}}
   end
 
   defp select_resource_field(resource, {:simple, name}, ctx) do
     case classify_resource_field(resource, name) do
       {:attribute, field} ->
-        {[name], [], {:attr, name, primitive_or_sub(field.type, :default, ctx)}}
+        internal = field.name
+
+        {[internal], [],
+         {:attr, resource.module, internal, primitive_or_sub(field.type, :default, ctx)}}
 
       {:calculation, field} ->
         if has_required_args?(field) do
@@ -341,11 +336,15 @@ defmodule AshLua.Fields do
              )}
           )
         else
-          {[], [name], {:calc, name, primitive_or_sub(field.type, :default, ctx)}}
+          internal = field.name
+
+          {[], [internal],
+           {:calc, resource.module, internal, primitive_or_sub(field.type, :default, ctx)}}
         end
 
-      {:aggregate, _field} ->
-        {[], [name], {:agg, name}}
+      {:aggregate, field} ->
+        internal = field.name
+        {[], [internal], {:agg, resource.module, internal}}
 
       {:relationship, rel} ->
         # Default sub-selection: pk-only on destination
@@ -356,7 +355,7 @@ defmodule AshLua.Fields do
 
         load_entry = if sub_load == [], do: rel.name, else: {rel.name, sub_load}
         kind = rel_kind(rel.cardinality)
-        {[], [load_entry], {kind, rel.name, sub_template}}
+        {[], [load_entry], {kind, resource.module, rel.name, sub_template}}
 
       :unknown ->
         s = name_str(name)
@@ -368,6 +367,7 @@ defmodule AshLua.Fields do
   defp select_resource_field(resource, {:nested, name, sub_ast}, ctx) do
     case classify_resource_field(resource, name) do
       {:attribute, field} ->
+        internal = field.name
         {sub_sel, sub_ld, sub_tmpl} = select_for_type(field.type, sub_ast, ctx)
 
         if sub_sel != [] or sub_ld != [] do
@@ -384,7 +384,7 @@ defmodule AshLua.Fields do
           )
         end
 
-        {[name], [], {:attr, name, sub_tmpl}}
+        {[internal], [], {:attr, resource.module, internal, sub_tmpl}}
 
       {:calculation, field} ->
         if has_required_args?(field) do
@@ -417,7 +417,8 @@ defmodule AshLua.Fields do
           )
         end
 
-        {[], [name], {:calc, name, sub_tmpl}}
+        internal = field.name
+        {[], [internal], {:calc, resource.module, internal, sub_tmpl}}
 
       {:relationship, rel} ->
         dest_resource = Manifest.get_resource!(ctx.lookup, rel.destination)
@@ -425,7 +426,7 @@ defmodule AshLua.Fields do
 
         load_entry = if sub_load == [], do: rel.name, else: {rel.name, sub_load}
         kind = rel_kind(rel.cardinality)
-        {[], [load_entry], {kind, rel.name, sub_tmpl}}
+        {[], [load_entry], {kind, resource.module, rel.name, sub_tmpl}}
 
       {:aggregate, _field} ->
         s = name_str(name)
@@ -450,6 +451,7 @@ defmodule AshLua.Fields do
   defp select_resource_field(resource, {:with_args, name, args, sub_ast}, ctx) do
     case classify_resource_field(resource, name) do
       {:calculation, field} ->
+        internal = field.name
         {sub_sel, sub_ld, sub_tmpl} = select_for_type(field.type, sub_ast, ctx)
 
         if sub_sel != [] or sub_ld != [] do
@@ -467,8 +469,8 @@ defmodule AshLua.Fields do
         end
 
         # Ash supports `{calc_name, %{arg => value}}` in load.
-        load_entry = {name, atomize_arg_keys(args, field)}
-        {[], [load_entry], {:calc, name, sub_tmpl}}
+        load_entry = {internal, atomize_arg_keys(args, field)}
+        {[], [load_entry], {:calc, resource.module, internal, sub_tmpl}}
 
       _ ->
         s = name_str(name)
@@ -486,21 +488,27 @@ defmodule AshLua.Fields do
   end
 
   defp classify_resource_field(%Manifest.Resource{} = resource, name) do
-    case Manifest.Resource.get_field(resource, name) do
-      %Manifest.Field{kind: :attribute} = f ->
-        {:attribute, f}
+    internal_name = AshLua.FieldNames.to_internal_field_name(resource.module, name)
 
-      %Manifest.Field{kind: :calculation} = f ->
-        {:calculation, f}
+    if is_atom(internal_name) do
+      case Manifest.Resource.get_field(resource, internal_name) do
+        %Manifest.Field{kind: :attribute} = f ->
+          {:attribute, f}
 
-      %Manifest.Field{kind: :aggregate} = f ->
-        {:aggregate, f}
+        %Manifest.Field{kind: :calculation} = f ->
+          {:calculation, f}
 
-      nil ->
-        case Manifest.Resource.get_relationship(resource, name) do
-          %Manifest.Relationship{} = r -> {:relationship, r}
-          nil -> :unknown
-        end
+        %Manifest.Field{kind: :aggregate} = f ->
+          {:aggregate, f}
+
+        nil ->
+          case Manifest.Resource.get_relationship(resource, internal_name) do
+            %Manifest.Relationship{} = r -> {:relationship, r}
+            nil -> :unknown
+          end
+      end
+    else
+      :unknown
     end
   end
 
@@ -591,8 +599,8 @@ defmodule AshLua.Fields do
                    )}
                 )
 
-              %{type: t} ->
-                {:typed_map_field, name, primitive_or_sub(t, :default, ctx)}
+              %{name: internal, type: t} ->
+                {:typed_map_field, internal, primitive_or_sub(t, :default, ctx)}
             end
 
           {:nested, name, sub_ast} ->
@@ -610,8 +618,8 @@ defmodule AshLua.Fields do
                    )}
                 )
 
-              %{type: t} ->
-                {:typed_map_field, name, primitive_or_sub(t, sub_ast, ctx)}
+              %{name: internal, type: t} ->
+                {:typed_map_field, internal, primitive_or_sub(t, sub_ast, ctx)}
             end
 
           {:with_args, name, _, _} ->
@@ -633,7 +641,10 @@ defmodule AshLua.Fields do
     {[], [], {:typed_map, entries}}
   end
 
-  defp find_field(fields, name), do: Enum.find(fields, &(&1.name == name))
+  defp find_field(fields, name) do
+    atom_name = to_field_atom(name)
+    Enum.find(fields, &(&1.name == atom_name))
+  end
 
   defp select_for_tuple(%Manifest.Type{element_types: ets}, :default, ctx) do
     entries =
@@ -655,7 +666,7 @@ defmodule AshLua.Fields do
     entries =
       Enum.map(ast, fn
         {:simple, name} ->
-          case Enum.find(indexed, &(&1.name == name)) do
+          case find_tuple_field(indexed, name) do
             nil ->
               s = name_str(name)
 
@@ -669,12 +680,12 @@ defmodule AshLua.Fields do
                  )}
               )
 
-            %{type: t, index: idx} ->
-              {:tuple_field, name, idx, primitive_or_sub(t, :default, ctx)}
+            %{name: internal, type: t, index: idx} ->
+              {:tuple_field, internal, idx, primitive_or_sub(t, :default, ctx)}
           end
 
         {:nested, name, sub_ast} ->
-          case Enum.find(indexed, &(&1.name == name)) do
+          case find_tuple_field(indexed, name) do
             nil ->
               s = name_str(name)
 
@@ -688,8 +699,8 @@ defmodule AshLua.Fields do
                  )}
               )
 
-            %{type: t, index: idx} ->
-              {:tuple_field, name, idx, primitive_or_sub(t, sub_ast, ctx)}
+            %{name: internal, type: t, index: idx} ->
+              {:tuple_field, internal, idx, primitive_or_sub(t, sub_ast, ctx)}
           end
 
         {:with_args, name, _, _} ->
@@ -707,6 +718,11 @@ defmodule AshLua.Fields do
       end)
 
     {[], [], {:tuple, entries}}
+  end
+
+  defp find_tuple_field(fields, name) do
+    atom_name = to_field_atom(name)
+    Enum.find(fields, &(&1.name == atom_name))
   end
 
   defp select_for_union(%Manifest.Type{members: members}, :default, ctx) do
@@ -732,7 +748,7 @@ defmodule AshLua.Fields do
           )
 
         {:nested, name, sub_ast} ->
-          {name, sub_ast}
+          {to_field_atom(name) || name, sub_ast}
 
         {:with_args, name, _, _} ->
           s = name_str(name)

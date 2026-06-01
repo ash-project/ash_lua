@@ -26,6 +26,17 @@ defmodule AshLua.Resource do
         type: :boolean,
         default: true,
         doc: "Whether to expose this resource and its public actions to Lua."
+      ],
+      field_names: [
+        type: :keyword_list,
+        default: [],
+        doc: "A keyword list mapping internal Ash field names to exact Lua-facing field names."
+      ],
+      argument_names: [
+        type: :keyword_list,
+        default: [],
+        doc:
+          "A keyword list mapping internal Ash argument names to exact Lua-facing argument names per action."
       ]
     ]
   }
@@ -36,5 +47,7 @@ defmodule AshLua.Resource do
   Used in conjunction with `AshLua.Domain` on the resource's owning domain.
   """
 
-  use Spark.Dsl.Extension, sections: [@lua]
+  use Spark.Dsl.Extension,
+    sections: [@lua],
+    verifiers: [AshLua.Resource.Verifiers.VerifyNames]
 end

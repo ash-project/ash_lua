@@ -531,6 +531,8 @@ defmodule AshLua.Runtime do
       ash_opts = build_ash_opts(state)
       {fields_input, input} = Map.pop(input, "fields")
       {operation, input} = Map.pop(input, "operation")
+      input = AshLua.FieldNames.to_internal_input(resource, action, input)
+      operation = AshLua.FieldNames.to_internal_operation(resource, operation)
 
       cond do
         is_nil(operation) ->
@@ -568,11 +570,11 @@ defmodule AshLua.Runtime do
             {[true, nil], state}
 
           {:error, error} ->
-            encode_error_response(state, error)
+            encode_action_error_response(state, resource, action, error)
         end
 
       {:error, reason} ->
-        encode_error_response(state, reason)
+        encode_action_error_response(state, resource, action, reason)
     end
   end
 
@@ -583,15 +585,25 @@ defmodule AshLua.Runtime do
         {[encoded, nil], state}
 
       {:operation_error, reason} ->
-        encode_error_response(state, reason)
+        encode_action_error_response(state, resource, action, reason)
 
       {:error, error} ->
-        encode_error_response(state, error)
+        encode_action_error_response(state, resource, action, error)
     end
   end
 
   defp encode_error_response(state, error) do
     {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
+    {[nil, encoded], state}
+  end
+
+  defp encode_action_error_response(state, resource, action, error) do
+    encoded_error =
+      error
+      |> Encoder.encode_error()
+      |> AshLua.FieldNames.to_lua_error(resource, action)
+
+    {encoded, state} = Lua.encode!(state, encoded_error)
     {[nil, encoded], state}
   end
 

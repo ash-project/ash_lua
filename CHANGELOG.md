@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.1.3](https://github.com/ash-project/ash_lua/compare/v0.1.2...v0.1.3) (2026-06-01)
+
+
+
+
+### Improvements:
+
+* refine docs tooling for agents by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.1.2](https://github.com/ash-project/ash_lua/compare/v0.1.1...v0.1.2) (2026-05-31)
 
 

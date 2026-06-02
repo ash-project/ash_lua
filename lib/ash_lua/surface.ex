@@ -24,7 +24,7 @@ defmodule AshLua.Surface do
         }
 
   @doc "Generates a manifest for an OTP app with AshLua surface metadata attached."
-  @spec for_otp_app(atom(), keyword()) :: {:ok, Manifest.t()} | {:error, term()}
+  @spec for_otp_app(atom(), keyword()) :: {:ok, Manifest.t()}
   def for_otp_app(otp_app, opts \\ []) do
     {filter, opts} = Keyword.pop(opts, :action_entrypoints)
     action_entrypoints = action_entrypoints_for_otp_app(otp_app, filter)
@@ -36,7 +36,7 @@ defmodule AshLua.Surface do
   end
 
   @doc "Generates the scoped Lua manifest for an `AshLua.EvalActions` resource."
-  @spec for_eval_resource(module()) :: {:ok, Manifest.t()} | {:error, term()}
+  @spec for_eval_resource(module()) :: {:ok, Manifest.t()}
   def for_eval_resource(resource) do
     otp_app = AshLua.EvalActions.Info.otp_app(resource)
 

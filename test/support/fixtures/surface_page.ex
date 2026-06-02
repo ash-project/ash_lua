@@ -15,7 +15,7 @@ defmodule AshLua.Test.Surface.Page do
 
   lua do
     field_names title: "headline", featured?: "featured"
-    argument_names(summarize: [title_text: "headlineText"])
+    argument_names summarize: [title_text: "headlineText"]
   end
 
   actions do

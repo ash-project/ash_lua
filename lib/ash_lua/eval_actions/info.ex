@@ -48,12 +48,9 @@ defmodule AshLua.EvalActions.Info do
   """
   @spec action_entrypoints(Ash.Resource.t() | Spark.Dsl.t()) :: [{module(), atom()}]
   def action_entrypoints(resource) do
-    resource
-    |> AshLua.Surface.for_eval_resource()
-    |> case do
-      {:ok, manifest} -> AshLua.Surface.action_entrypoints(manifest)
-      {:error, error} -> raise error
-    end
+    {:ok, manifest} = AshLua.Surface.for_eval_resource(resource)
+
+    AshLua.Surface.action_entrypoints(manifest)
   end
 
   @doc false

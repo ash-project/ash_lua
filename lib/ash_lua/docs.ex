@@ -722,8 +722,7 @@ defmodule AshLua.Docs do
 
   defp input_section(action, resource, resource_lookup, type_lookup) do
     input_rows =
-      (action.inputs || [])
-      |> Enum.map(&input_row(&1, action, resource, resource_lookup, type_lookup))
+      Enum.map(action.inputs, &input_row(&1, action, resource, resource_lookup, type_lookup))
 
     pk_rows = pk_rows(action, resource)
     reserved_rows = reserved_rows(action)

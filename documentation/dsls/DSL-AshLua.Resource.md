@@ -32,6 +32,8 @@ end
 |------|------|---------|------|
 | [`name`](#lua-name){: #lua-name } | `String.t` |  | The Lua key (under the domain table) to expose this resource as. Defaults to snake_case of the resource module's last segment. |
 | [`expose?`](#lua-expose?){: #lua-expose? } | `boolean` | `true` | Whether to expose this resource and its public actions to Lua. |
+| [`field_names`](#lua-field_names){: #lua-field_names } | `keyword` | `[]` | A keyword list mapping internal Ash field names to exact Lua-facing field names. |
+| [`argument_names`](#lua-argument_names){: #lua-argument_names } | `keyword` | `[]` | A keyword list mapping internal Ash argument names to exact Lua-facing argument names per action. |
 
 
 

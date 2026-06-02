@@ -10,6 +10,9 @@ Extension that exposes an Ash domain's resources to Lua scripts evaluated throug
 Domain-level configuration for AshLua.
 
 
+### Nested DSLs
+ * [namespace](#lua-namespace)
+   * action
 
 
 ### Examples
@@ -30,6 +33,87 @@ end
 | [`name`](#lua-name){: #lua-name } | `String.t` |  | The Lua table name to expose this domain under. Defaults to snake_case of the domain module's last segment. |
 
 
+
+### lua.namespace
+```elixir
+namespace name
+```
+
+
+Defines a public Lua namespace for actions.
+
+### Nested DSLs
+ * [action](#lua-namespace-action)
+
+
+### Examples
+```
+namespace "pages" do
+  action :list, MyApp.StorefrontPage, :list_for_storefront
+end
+
+```
+
+```
+namespace "storefronts.pages" do
+  action :list, MyApp.StorefrontPage, :list_for_storefront
+end
+
+```
+
+
+
+### Arguments
+
+| Name | Type | Default | Docs |
+|------|------|---------|------|
+| [`name`](#lua-namespace-name){: #lua-namespace-name .spark-required} | `String.t \| list(String.t)` |  | The public Lua namespace. Dotted strings are split into nested Lua tables, so "storefronts.pages" exposes `storefronts.pages.*`. |
+
+
+
+### lua.namespace.action
+```elixir
+action name, resource, action
+```
+
+
+Expose an Ash action at a public Lua function name inside a namespace.
+
+
+
+### Examples
+```
+namespace "pages" do
+  action :list, MyApp.StorefrontPage, :list_for_storefront
+end
+
+```
+
+
+
+### Arguments
+
+| Name | Type | Default | Docs |
+|------|------|---------|------|
+| [`name`](#lua-namespace-action-name){: #lua-namespace-action-name .spark-required} | `atom` |  | The Lua function name inside the namespace. |
+| [`resource`](#lua-namespace-action-resource){: #lua-namespace-action-resource .spark-required} | `module` |  | The Ash resource that owns the action. |
+| [`action`](#lua-namespace-action-action){: #lua-namespace-action-action .spark-required} | `atom` |  | The internal Ash action to call. |
+
+
+
+
+
+
+### Introspection
+
+Target: `AshLua.Domain.Action`
+
+
+
+
+### Introspection
+
+Target: `AshLua.Domain.Namespace`
 
 
 

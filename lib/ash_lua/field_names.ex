@@ -194,7 +194,7 @@ defmodule AshLua.FieldNames do
 
   def to_internal_sort(_resource, sort), do: sort
 
-  @doc "Rewrites field names in read operation descriptors like `{ \"sum\", \"total\" }`."
+  @doc ~S(Rewrites field names in read operation descriptors like `{ "sum", "total" }`.)
   @spec to_internal_operation(module(), term()) :: term()
   def to_internal_operation(resource, [op, field]) when is_binary(field) or is_atom(field) do
     [op, to_internal_field_string(resource, field)]

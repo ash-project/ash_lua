@@ -21,7 +21,10 @@ defmodule AshLua.TransactionsTest do
         AshLua.eval!(
           """
           return utils.transaction.transact({ "posts.mnesia_note" }, function()
-            local n = assert(posts.mnesia_note.create({ body = "alpha", fields = { "id", "body" } }))
+            local n = assert(posts.mnesia_note.create({
+              input = { body = "alpha" },
+              fields = { "id", "body" }
+            }))
             return n.body
           end)
           """,
@@ -38,7 +41,7 @@ defmodule AshLua.TransactionsTest do
         AshLua.eval!(
           """
           return utils.transaction.transact({ "posts.mnesia_note" }, function()
-            assert(posts.mnesia_note.create({ body = "first" }))
+            assert(posts.mnesia_note.create({ input = { body = "first" } }))
             -- intentionally pass an empty body to trigger an action-level error
             assert(posts.mnesia_note.create({}))
             return "should not reach"
@@ -66,7 +69,7 @@ defmodule AshLua.TransactionsTest do
         AshLua.eval!(
           """
           return utils.transaction.transact({ "posts.mnesia_note" }, function()
-            assert(posts.mnesia_note.create({ body = "first" }))
+            assert(posts.mnesia_note.create({ input = { body = "first" } }))
             return posts.mnesia_note.create({}) -- returns (nil, err) instead of asserting
           end)
           """,
@@ -139,7 +142,7 @@ defmodule AshLua.TransactionsTest do
         AshLua.eval!(
           """
           return utils.transaction.transact({ "posts.mnesia_note" }, function()
-            assert(posts.mnesia_note.create({ body = "will roll back" }))
+            assert(posts.mnesia_note.create({ input = { body = "will roll back" } }))
             utils.transaction.rollback("business rule failed")
             return "should not reach"
           end)
@@ -179,7 +182,7 @@ defmodule AshLua.TransactionsTest do
         AshLua.eval!(
           ~S"""
           return utils.transaction.transact({ "posts.mnesia_note" }, function()
-            assert(posts.mnesia_note.create({ body = "before error" }))
+            assert(posts.mnesia_note.create({ input = { body = "before error" } }))
             error({ code = "custom_thing", message = "i raised this directly" })
           end)
           """,
@@ -202,7 +205,7 @@ defmodule AshLua.TransactionsTest do
         AshLua.eval!(
           ~S"""
           return utils.transaction.transact({ "posts.mnesia_note" }, function()
-            assert(posts.mnesia_note.create({ body = "before error" }))
+            assert(posts.mnesia_note.create({ input = { body = "before error" } }))
             error("boom")
           end)
           """,
@@ -223,7 +226,10 @@ defmodule AshLua.TransactionsTest do
           """
           local prefix = "from-outer-"
           return utils.transaction.transact({ "posts.mnesia_note" }, function()
-            local n = assert(posts.mnesia_note.create({ body = prefix .. "scope", fields = { "body" } }))
+            local n = assert(posts.mnesia_note.create({
+              input = { body = prefix .. "scope" },
+              fields = { "body" }
+            }))
             return n.body
           end)
           """,

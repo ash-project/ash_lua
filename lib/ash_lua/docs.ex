@@ -158,12 +158,12 @@ defmodule AshLua.Docs do
     Wrap a block of operations in a transaction with
     `utils.transaction.transact`:
 
-    ```lua
-    utils.transaction.transact({ "posts.post", "posts.comment" }, function()
-      local post = assert(posts.post.create({ title = "Hello" }))
-      assert(posts.comment.create({ post_id = post.id, body = "First" }))
-      return post.id
-    end)
+     ```lua
+     utils.transaction.transact({ "posts.post", "posts.comment" }, function()
+       local post = assert(posts.post.create({ input = { title = "Hello" } }))
+       assert(posts.comment.create({ input = { post_id = post.id, body = "First" } }))
+       return post.id
+     end)
     ```
 
     The first argument is the list of record-type paths that the transaction
@@ -188,11 +188,11 @@ defmodule AshLua.Docs do
 
     Example with `assert`-driven rollback:
 
-    ```lua
-    local _, err = utils.transaction.transact({ "posts.post" }, function()
-      assert(posts.post.create({ title = "Will Roll Back" }))
-      assert(posts.post.create({ })) -- missing required `title`, raises
-    end)
+     ```lua
+     local _, err = utils.transaction.transact({ "posts.post" }, function()
+       assert(posts.post.create({ input = { title = "Will Roll Back" } }))
+       assert(posts.post.create({ })) -- missing required `title`, raises
+     end)
 
     if err then
       -- Neither post exists; the whole transaction was rolled back.
@@ -201,10 +201,10 @@ defmodule AshLua.Docs do
 
     Example with explicit rollback:
 
-    ```lua
-    local _, err = utils.transaction.transact({ "posts.post" }, function()
-      local p = assert(posts.post.create({ title = "Tentative" }))
-      if not some_business_check(p) then
+     ```lua
+     local _, err = utils.transaction.transact({ "posts.post" }, function()
+       local p = assert(posts.post.create({ input = { title = "Tentative" } }))
+       if not some_business_check(p) then
         utils.transaction.rollback("post failed business check")
       end
       return p.id
@@ -252,7 +252,7 @@ defmodule AshLua.Docs do
     error is `nil`; on failure the result is `nil` and the error is a table.
 
     ```lua
-    local user, err = accounts.user.create({ name = "" })
+     local user, err = accounts.user.create({ input = { name = "" } })
     if err then
       -- handle the failure
     else
@@ -264,7 +264,7 @@ defmodule AshLua.Docs do
     `assert/1`:
 
     ```lua
-    local user = assert(accounts.user.create({ name = "Zach" }))
+     local user = assert(accounts.user.create({ input = { name = "Zach" } }))
     ```
 
     `assert` returns the first value when the second is `nil`, and raises
@@ -632,10 +632,11 @@ defmodule AshLua.Docs do
 
   defp reserved_input_keys do
     """
-    ## Reserved input keys
+     ## Reserved input keys
 
-      * `fields` — which fields to return; selection tree (list of names and
-        nested tables). Default: primary key only.
+      * `input` — action input values live inside this table.
+       * `fields` — which fields to return; selection tree (list of names and
+         nested tables). Default: primary key only.
       * `filter` — narrow the result set by field values (list operations
         only). Shape is per-record-type; see each record type's page for the
         fields you can filter on.
@@ -722,12 +723,16 @@ defmodule AshLua.Docs do
 
   defp input_section(action, resource, resource_lookup, type_lookup) do
     input_rows =
-      Enum.map(action.inputs, &input_row(&1, action, resource, resource_lookup, type_lookup))
+      Enum.map(
+        action.inputs,
+        &input_row(&1, action, resource, resource_lookup, type_lookup)
+      )
 
     pk_rows = pk_rows(action, resource)
     reserved_rows = reserved_rows(action)
+    action_input_rows = input_rows ++ pk_rows
 
-    rows = input_rows ++ pk_rows ++ reserved_rows
+    rows = input_container_rows(action_input_rows) ++ action_input_rows ++ reserved_rows
 
     if rows == [] do
       "## Input\n\n_None._"
@@ -741,7 +746,26 @@ defmodule AshLua.Docs do
     end
   end
 
-  defp input_row(%Manifest.Argument{} = input, action, resource, resource_lookup, type_lookup) do
+  defp input_container_rows(action_input_rows) do
+    if action_input_rows != [] do
+      required =
+        if Enum.any?(action_input_rows, &String.contains?(&1, "| yes |")), do: "yes", else: "no"
+
+      [
+        "| `input` | table | #{required} | action input values |"
+      ]
+    else
+      []
+    end
+  end
+
+  defp input_row(
+         %Manifest.Argument{} = input,
+         action,
+         resource,
+         resource_lookup,
+         type_lookup
+       ) do
     required = if not input.allow_nil? and not input.has_default?, do: "yes", else: "no"
     name = input_name(input, action, resource)
 
@@ -754,7 +778,7 @@ defmodule AshLua.Docs do
       |> Enum.reject(&(is_nil(&1) or &1 == ""))
       |> Enum.join("; ")
 
-    "| `#{name}` | #{type_link(input.type, resource_lookup, type_lookup)} | #{required} | #{notes} |"
+    "| `input.#{name}` | #{type_link(input.type, resource_lookup, type_lookup)} | #{required} | #{notes} |"
   end
 
   defp input_name(
@@ -779,7 +803,7 @@ defmodule AshLua.Docs do
 
       lua_name = AshLua.FieldNames.to_lua_field_name(resource.module, pk)
 
-      "| `#{lua_name}` | #{type_text} | yes | identifies the record |"
+      "| `input.#{lua_name}` | #{type_text} | yes | identifies the record |"
     end)
   end
 

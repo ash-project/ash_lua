@@ -9,7 +9,7 @@ defmodule AshLua.Runtime do
 
   ## Lua surface
 
-      local user, err = accounts.user.create({ name = "Zach" })
+      local user, err = accounts.user.create({ input = { name = "Zach" } })
       assert(accounts.todo.complete({ id = todo.id }))      -- raises on error
 
   Action callables always return `(result, nil)` on success and `(nil, err_table)` on failure;
@@ -23,6 +23,7 @@ defmodule AshLua.Runtime do
   alias AshLua.Encoder
 
   @private_key :ash_lua
+  @reserved_call_input_keys ~w(fields filter sort limit offset page operation)
 
   @doc """
   Builds a `%Lua{}` VM with Ash bindings installed.
@@ -527,35 +528,111 @@ defmodule AshLua.Runtime do
 
   defp build_action_callback(resource, action, manifest) do
     fn args, state ->
-      input = decode_call_args(state, args)
-      ash_opts = build_ash_opts(state)
-      {fields_input, input} = Map.pop(input, "fields")
-      {operation, input} = Map.pop(input, "operation")
-      input = AshLua.FieldNames.to_internal_input(resource, action, input)
-      operation = AshLua.FieldNames.to_internal_operation(resource, operation)
+      call_input = decode_call_args(state, args)
 
-      cond do
-        is_nil(operation) ->
-          regular_call(resource, action, input, ash_opts, fields_input, manifest, state)
+      case split_call_input(call_input) do
+        {:ok, action_input, controls} ->
+          ash_opts = build_ash_opts(state)
+          {fields_input, controls} = Map.pop(controls, "fields")
+          {operation, controls} = Map.pop(controls, "operation")
 
-        action.type == :read ->
-          operation_call(resource, action, input, ash_opts, operation, state)
+          controls = AshLua.FieldNames.to_internal_input(resource, action, controls)
 
-        true ->
-          t = Atom.to_string(action.type)
+          action_input =
+            AshLua.FieldNames.to_internal_action_input(resource, action, action_input)
 
-          encode_error_response(
-            state,
-            %AshLua.Errors.FieldsError{
-              message: "`operation` is only supported on list operations (this is `#{t}`)",
-              short_message: "operation only on list operations",
-              code: "operation_only_on_list_operations",
-              fields: [],
-              vars: %{"action_type" => t}
-            }
-          )
+          input = Map.merge(action_input, controls)
+          operation = AshLua.FieldNames.to_internal_operation(resource, operation)
+
+          cond do
+            is_nil(operation) ->
+              regular_call(resource, action, input, ash_opts, fields_input, manifest, state)
+
+            action.type == :read ->
+              operation_call(resource, action, input, ash_opts, operation, state)
+
+            true ->
+              t = Atom.to_string(action.type)
+
+              encode_error_response(
+                state,
+                %AshLua.Errors.FieldsError{
+                  message: "`operation` is only supported on list operations (this is `#{t}`)",
+                  short_message: "operation only on list operations",
+                  code: "operation_only_on_list_operations",
+                  fields: [],
+                  vars: %{"action_type" => t}
+                }
+              )
+          end
+
+        {:error, error} ->
+          encode_error_response(state, error)
       end
     end
+  end
+
+  defp split_call_input(input) do
+    {action_input, controls} = Map.pop(input, "input")
+
+    case unexpected_nested_input_keys(controls) do
+      [] ->
+        normalize_action_input(action_input, controls)
+
+      keys ->
+        {:error, nested_input_keys_error(keys)}
+    end
+  end
+
+  defp normalize_action_input(nil, controls), do: {:ok, %{}, controls}
+
+  defp normalize_action_input(action_input, controls) when is_map(action_input) do
+    {:ok, action_input, controls}
+  end
+
+  defp normalize_action_input(_action_input, _controls) do
+    {:error,
+     %AshLua.Errors.FieldsError{
+       message: "`input` must be a table of action input values",
+       short_message: "invalid input",
+       code: "invalid_input_shape",
+       fields: ["input"],
+       vars: %{}
+     }}
+  end
+
+  defp unexpected_nested_input_keys(input) do
+    input
+    |> Map.keys()
+    |> Enum.reject(&reserved_call_input_key?/1)
+    |> Enum.map(&to_string/1)
+    |> Enum.sort()
+  end
+
+  defp reserved_call_input_key?(key) when is_atom(key) do
+    key
+    |> Atom.to_string()
+    |> reserved_call_input_key?()
+  end
+
+  defp reserved_call_input_key?(key) when is_binary(key) do
+    key in @reserved_call_input_keys
+  end
+
+  defp reserved_call_input_key?(_key), do: false
+
+  defp nested_input_keys_error(keys) do
+    joined = Enum.map_join(keys, ", ", &"`#{&1}`")
+
+    %AshLua.Errors.FieldsError{
+      message:
+        "Lua action inputs must be passed under `input`; found top-level key(s): " <>
+          joined,
+      short_message: "invalid input shape",
+      code: "invalid_input_shape",
+      fields: keys,
+      vars: %{"keys" => keys}
+    }
   end
 
   defp regular_call(resource, action, input, ash_opts, fields_input, manifest, state) do

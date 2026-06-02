@@ -27,7 +27,7 @@ defmodule AshLua.EvalActionsTest do
       input =
         Ash.ActionInput.for_action(MCPActions, :eval, %{
           script: """
-          return posts.post.create({ body = "missing title" })
+          return posts.post.create({ input = { body = "missing title" } })
           """
         })
 
@@ -140,7 +140,7 @@ defmodule AshLua.EvalActionsTest do
       input =
         Ash.ActionInput.for_action(MCPActions, :eval, %{
           script: """
-          local _, err = posts.comment.create({ body = "x" })
+          local _, err = posts.comment.create({ input = { body = "x" } })
           return err == nil
           """
         })

@@ -71,12 +71,14 @@ defmodule AshLua.SurfaceTest do
     {:ok, page} = Ash.create(Page, %{title: title}, action: :create)
 
     script = """
-    local page = assert(surface.page_rename({
-      id = "#{page.id}",
-      headline = "#{renamed}",
-      featured = true,
-      fields = { "id", "headline", "featured" }
-    }))
+     local page = assert(surface.page_rename({
+       input = {
+         id = "#{page.id}",
+         headline = "#{renamed}",
+         featured = true
+       },
+       fields = { "id", "headline", "featured" }
+     }))
 
     return page
     """
@@ -94,7 +96,9 @@ defmodule AshLua.SurfaceTest do
 
   test "argument_names rewrite generic action inputs" do
     script = """
-    return assert(surface.page_summarize({ headlineText = "About" }))
+    return assert(surface.page_summarize({
+      input = { headlineText = "About" }
+    }))
     """
 
     {[result, nil], _lua} = AshLua.eval!(script, opts())
@@ -102,12 +106,26 @@ defmodule AshLua.SurfaceTest do
     assert result == "summary: About"
   end
 
+  test "explicit surface action inputs must be nested under input" do
+    script = """
+    local _result, err = surface.page_summarize({ headlineText = "About" })
+
+    return err.errors[1].code, err.errors[1].fields[1]
+    """
+
+    {[code, field], _lua} = AshLua.eval!(script, opts())
+
+    assert code == "invalid_input_shape"
+    assert field == "headlineText"
+  end
+
   test "docs use field_names in resource-facing rows" do
     {:ok, callable_md} = AshLua.Docs.callable_doc(opts(), "surface.page_rename")
     {:ok, type_md} = AshLua.Docs.type_doc(opts(), "surface.page")
 
-    assert callable_md =~ "| `headline` |"
-    assert callable_md =~ "| `featured` |"
+    assert callable_md =~ "| `input` | table | yes |"
+    assert callable_md =~ "| `input.headline` |"
+    assert callable_md =~ "| `input.featured` |"
     refute callable_md =~ "| `title` |"
     refute callable_md =~ "| `featured?` |"
 
@@ -119,7 +137,7 @@ defmodule AshLua.SurfaceTest do
     refute type_md =~ "| `featured?` |"
 
     {:ok, generic_md} = AshLua.Docs.callable_doc(opts(), "surface.page_summarize")
-    assert generic_md =~ "| `headlineText` | `string` | yes"
+    assert generic_md =~ "| `input.headlineText` | `string` | yes"
     refute generic_md =~ "| `title_text` |"
   end
 
@@ -199,8 +217,9 @@ defmodule AshLua.SurfaceTest do
 
     assert {:ok, callable_md} = Ash.run_action(callable_input)
     assert callable_md =~ "# `surface.page_rename`"
-    assert callable_md =~ "| `headline` |"
-    assert callable_md =~ "| `featured` |"
+    assert callable_md =~ "| `input` | table | yes |"
+    assert callable_md =~ "| `input.headline` |"
+    assert callable_md =~ "| `input.featured` |"
     refute callable_md =~ "| `title` |"
 
     assert {:ok, type_md} = Ash.run_action(type_input)
@@ -213,7 +232,7 @@ defmodule AshLua.SurfaceTest do
       Ash.ActionInput.for_action(MCPActions, :docs, %{name: "surface.page_summarize"})
 
     assert {:ok, generic_md} = Ash.run_action(generic_input)
-    assert generic_md =~ "| `headlineText` | `string` | yes"
+    assert generic_md =~ "| `input.headlineText` | `string` | yes"
     refute generic_md =~ "| `title_text` |"
   end
 

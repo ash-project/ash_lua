@@ -442,7 +442,7 @@ defmodule AshLua.FieldsTest do
       {[nil, err], _lua} =
         AshLua.eval!(
           """
-          return posts.post.create({ title = "x", operation = "count" })
+          return posts.post.create({ input = { title = "x" }, operation = "count" })
           """,
           otp_app: :ash_lua
         )
@@ -464,7 +464,7 @@ defmodule AshLua.FieldsTest do
         AshLua.eval!(
           """
           local p = assert(posts.post.create({
-            title = "Created", body = "B", author_id = "#{user.id}",
+            input = { title = "Created", body = "B", author_id = "#{user.id}" },
             fields = { "title", { author = { "name" } } }
           }))
           return p
@@ -485,7 +485,7 @@ defmodule AshLua.FieldsTest do
         AshLua.eval!(
           """
           local p = assert(posts.post.update({
-            id = "#{post.id}", title = "New",
+            input = { id = "#{post.id}", title = "New" },
             fields = { "title", "title_downcase" }
           }))
           return p
@@ -505,7 +505,7 @@ defmodule AshLua.FieldsTest do
         AshLua.eval!(
           """
           local p = assert(posts.post.destroy({
-            id = "#{post.id}",
+            input = { id = "#{post.id}" },
             fields = { "title" }
           }))
           return p
@@ -521,7 +521,9 @@ defmodule AshLua.FieldsTest do
       {[count], _lua} =
         AshLua.eval!(
           """
-          local n = assert(posts.post.word_count({ text = "one two three" }))
+          local n = assert(posts.post.word_count({
+            input = { text = "one two three" }
+          }))
           return n
           """,
           otp_app: :ash_lua

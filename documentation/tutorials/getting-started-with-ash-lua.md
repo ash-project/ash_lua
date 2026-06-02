@@ -94,12 +94,14 @@ callable as `accounts.user.<action>(input)` from Lua.
 ```elixir
 {[user_id], _lua} =
   AshLua.eval!(
-    """
-    local user, err = accounts.user.create({
-      name = "Zach",
-      email = "z@example.com",
-      fields = { "id" }
-    })
+	    """
+	    local user, err = accounts.user.create({
+	      input = {
+	        name = "Zach",
+	        email = "z@example.com"
+	      },
+	      fields = { "id" }
+	    })
     assert(err == nil)
     return user.id
     """,
@@ -123,7 +125,7 @@ two values: a result and an error. A successful call returns `(result, nil)`;
 a failed call returns `(nil, err_table)`.
 
 ```lua
-local user, err = accounts.user.create({ name = "Zach" })
+local user, err = accounts.user.create({ input = { name = "Zach" } })
 
 if err then
   -- err is a table: { message = "...", errors = { { code = "...", fields = {...}, ... }, ... } }
@@ -136,7 +138,7 @@ end
 If you'd rather have errors raise, wrap the call in Lua's built-in `assert`:
 
 ```lua
-local user = assert(accounts.user.create({ name = "Zach" }))
+local user = assert(accounts.user.create({ input = { name = "Zach" } }))
 ```
 
 `assert` returns the first value when the second is `nil`, and raises with the
@@ -212,19 +214,21 @@ Supported operations: `"count"`, `"exists"`, and `{ "sum" | "avg" | "min" |
 
 ## 7. Mutations
 
-Create / update / delete behave like read, except update and delete take the
-primary key inline in the input:
+Create / update / delete behave like read, except action fields and arguments go
+under the `input` key. Update and delete take the primary key there too:
 
 ```lua
 local post = assert(posts.post.create({
-  title = "Hello", body = "World", fields = { "id", "title" }
+  input = { title = "Hello", body = "World" },
+  fields = { "id", "title" }
 }))
 
 local updated = assert(posts.post.update({
-  id = post.id, title = "Hello again", fields = { "title" }
+  input = { id = post.id, title = "Hello again" },
+  fields = { "title" }
 }))
 
-assert(posts.post.destroy({ id = post.id }))
+assert(posts.post.destroy({ input = { id = post.id } }))
 ```
 
 Generic actions (defined with `action :name, type do ... end`) take their

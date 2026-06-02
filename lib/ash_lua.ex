@@ -31,7 +31,7 @@ defmodule AshLua do
       end
 
       AshLua.eval!(\"""
-        local user, err = accounts.user.create({ name = "Zach" })
+        local user, err = accounts.user.create({ input = { name = "Zach" } })
         assert(err == nil)
         return user.id
       \""", otp_app: :my_app, actor: current_user)
@@ -39,7 +39,7 @@ defmodule AshLua do
   Action callables always return `(result, nil)` on success and `(nil, err_table)` on failure.
   Wrap a call in Lua's built-in `assert()` for raise semantics:
 
-      local user = assert(accounts.user.create({ name = "Zach" }))
+      local user = assert(accounts.user.create({ input = { name = "Zach" } }))
 
   ## Actor / tenant / context
 

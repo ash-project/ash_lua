@@ -89,6 +89,17 @@ defmodule AshLua.FieldNames do
 
   def to_internal_input(_resource, _action, input), do: input
 
+  @doc "Rewrites only action input keys, without treating reserved call controls specially."
+  @spec to_internal_action_input(module(), map(), map()) :: map()
+  def to_internal_action_input(resource, %{name: action_name, type: action_type}, input)
+      when is_map(input) do
+    Map.new(input, fn {key, value} ->
+      {to_internal_action_input_key(resource, action_name, action_type, key), value}
+    end)
+  end
+
+  def to_internal_action_input(_resource, _action, input), do: input
+
   @doc "Rewrites encoded Ash error fields to Lua-facing input names."
   @spec to_lua_error(map(), module(), map()) :: map()
   def to_lua_error(error_map, resource, %{name: action_name, type: action_type})
@@ -120,6 +131,10 @@ defmodule AshLua.FieldNames do
        do: key
 
   defp to_internal_input_key(resource, action_name, action_type, key) do
+    to_internal_action_input_key(resource, action_name, action_type, key)
+  end
+
+  defp to_internal_action_input_key(resource, action_name, action_type, key) do
     argument_name = to_internal_argument_name(resource, action_name, key)
 
     cond do

@@ -48,6 +48,14 @@ defmodule AshLua.EvalActions.Info do
   """
   @spec action_entrypoints(Ash.Resource.t() | Spark.Dsl.t()) :: [{module(), atom()}]
   def action_entrypoints(resource) do
+    {:ok, manifest} = AshLua.Surface.for_eval_resource(resource)
+
+    AshLua.Surface.action_entrypoints(manifest)
+  end
+
+  @doc false
+  @spec exposed_action_entrypoints(Ash.Resource.t() | Spark.Dsl.t()) :: [{module(), atom()}]
+  def exposed_action_entrypoints(resource) do
     resource
     |> exposes()
     |> Enum.flat_map(&expand_expose/1)

@@ -231,7 +231,7 @@ defmodule AshLua.Encoder do
     Enum.map(list, &encode_with_template(&1, sub))
   end
 
-  def encode_with_template(record, {:resource, entries}) when is_map(record) do
+  def encode_with_template(record, {:resource, _resource, entries}) when is_map(record) do
     Map.new(entries, fn entry -> encode_resource_entry(record, entry) end)
   end
 
@@ -264,19 +264,22 @@ defmodule AshLua.Encoder do
 
   def encode_with_template(value, _template), do: encode_result(value)
 
-  defp encode_resource_entry(record, {:attr, name, sub}) do
-    {Atom.to_string(name), encode_with_template(Map.get(record, name), sub)}
+  defp encode_resource_entry(record, {:attr, resource, name, sub}) do
+    {AshLua.FieldNames.to_lua_field_name(resource, name),
+     record |> Map.get(name) |> encode_with_template(sub)}
   end
 
-  defp encode_resource_entry(record, {:calc, name, sub}) do
-    {Atom.to_string(name), encode_with_template(unwrap_loaded(Map.get(record, name)), sub)}
+  defp encode_resource_entry(record, {:calc, resource, name, sub}) do
+    {AshLua.FieldNames.to_lua_field_name(resource, name),
+     encode_with_template(unwrap_loaded(Map.get(record, name)), sub)}
   end
 
-  defp encode_resource_entry(record, {:agg, name}) do
-    {Atom.to_string(name), encode_result(unwrap_loaded(Map.get(record, name)))}
+  defp encode_resource_entry(record, {:agg, resource, name}) do
+    {AshLua.FieldNames.to_lua_field_name(resource, name),
+     encode_result(unwrap_loaded(Map.get(record, name)))}
   end
 
-  defp encode_resource_entry(record, {:rel_one, name, sub}) do
+  defp encode_resource_entry(record, {:rel_one, resource, name, sub}) do
     value = Map.get(record, name)
 
     encoded =
@@ -287,10 +290,10 @@ defmodule AshLua.Encoder do
         record_or_struct -> encode_with_template(record_or_struct, sub)
       end
 
-    {Atom.to_string(name), encoded}
+    {AshLua.FieldNames.to_lua_field_name(resource, name), encoded}
   end
 
-  defp encode_resource_entry(record, {:rel_many, name, sub}) do
+  defp encode_resource_entry(record, {:rel_many, resource, name, sub}) do
     value = Map.get(record, name)
 
     encoded =
@@ -301,7 +304,7 @@ defmodule AshLua.Encoder do
         _ -> []
       end
 
-    {Atom.to_string(name), encoded}
+    {AshLua.FieldNames.to_lua_field_name(resource, name), encoded}
   end
 
   defp unwrap_loaded(%Ash.NotLoaded{}), do: nil

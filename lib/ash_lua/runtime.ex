@@ -9,7 +9,7 @@ defmodule AshLua.Runtime do
 
   ## Lua surface
 
-      local user, err = accounts.user.create({ name = "Zach" })
+      local user, err = accounts.user.create({ input = { name = "Zach" } })
       assert(accounts.todo.complete({ id = todo.id }))      -- raises on error
 
   Action callables always return `(result, nil)` on success and `(nil, err_table)` on failure;
@@ -23,6 +23,7 @@ defmodule AshLua.Runtime do
   alias AshLua.Encoder
 
   @private_key :ash_lua
+  @reserved_call_input_keys ~w(fields filter sort limit offset page operation)
 
   @doc """
   Builds a `%Lua{}` VM with Ash bindings installed.
@@ -41,11 +42,11 @@ defmodule AshLua.Runtime do
     manifest =
       case Keyword.fetch(opts, :manifest) do
         {:ok, %Manifest{} = m} ->
-          m
+          AshLua.Surface.for_manifest(m)
 
         :error ->
           otp_app = Keyword.fetch!(opts, :otp_app)
-          {:ok, m} = Manifest.generate(otp_app: otp_app)
+          {:ok, m} = AshLua.Surface.for_otp_app(otp_app)
           m
       end
 
@@ -61,7 +62,7 @@ defmodule AshLua.Runtime do
     lua
     |> Lua.put_private(@private_key, private)
     |> install_print_capture()
-    |> install_entrypoints(manifest)
+    |> install_surface(manifest)
     |> install_utils(manifest)
   end
 
@@ -126,36 +127,36 @@ defmodule AshLua.Runtime do
     Lua.eval!(lua, script, script_opts)
   end
 
-  defp install_entrypoints(lua, %Manifest{} = manifest) do
-    manifest.entrypoints
-    |> Enum.group_by(& &1.resource)
-    |> Enum.reduce(lua, fn {resource, eps_for_resource}, lua ->
-      install_resource(lua, resource, eps_for_resource, manifest)
+  defp install_surface(lua, %Manifest{entrypoints: entrypoints} = manifest) do
+    lua =
+      entrypoints
+      |> Enum.flat_map(&path_prefixes(parent_path(AshLua.Surface.path(&1))))
+      |> Enum.uniq()
+      |> Enum.sort_by(&length/1)
+      |> Enum.reduce(lua, fn path, lua ->
+        Lua.set!(lua, path, %{})
+      end)
+
+    Enum.reduce(entrypoints, lua, fn entrypoint, lua ->
+      callback =
+        build_action_callback(
+          entrypoint.resource,
+          entrypoint.action,
+          manifest
+        )
+
+      Lua.set!(lua, AshLua.Surface.path(entrypoint), callback)
     end)
   end
 
-  defp install_resource(lua, resource, entrypoints, manifest) do
-    if AshLua.Resource.Info.expose?(resource) do
-      domain = Ash.Resource.Info.domain(resource)
-      domain_name = AshLua.Domain.Info.name(domain)
-      resource_name = AshLua.Resource.Info.name(resource)
+  defp parent_path([_action]), do: []
+  defp parent_path(path), do: Enum.drop(path, -1)
 
-      # Pre-seed `[domain, resource]` as an empty table so each deep
-      # `Lua.set!/3` for an action can walk through it. Without this,
-      # the second resource under a shared domain trips `invalid_index`
-      # because luerl halts traversal at the first existing prefix
-      # (`[domain]`) and then can't materialize the missing parent.
-      lua = Lua.set!(lua, [domain_name, resource_name], %{})
+  defp path_prefixes([]), do: []
 
-      Enum.reduce(entrypoints, lua, fn entrypoint, lua ->
-        action_name = Atom.to_string(entrypoint.action.name)
-        path = [domain_name, resource_name, action_name]
-        callback = build_action_callback(resource, entrypoint.action, manifest)
-        Lua.set!(lua, path, callback)
-      end)
-    else
-      lua
-    end
+  defp path_prefixes(path) do
+    1..length(path)
+    |> Enum.map(&Enum.take(path, &1))
   end
 
   defp install_utils(lua, %Manifest{} = manifest) do
@@ -527,33 +528,111 @@ defmodule AshLua.Runtime do
 
   defp build_action_callback(resource, action, manifest) do
     fn args, state ->
-      input = decode_call_args(state, args)
-      ash_opts = build_ash_opts(state)
-      {fields_input, input} = Map.pop(input, "fields")
-      {operation, input} = Map.pop(input, "operation")
+      call_input = decode_call_args(state, args)
 
-      cond do
-        is_nil(operation) ->
-          regular_call(resource, action, input, ash_opts, fields_input, manifest, state)
+      case split_call_input(call_input) do
+        {:ok, action_input, controls} ->
+          ash_opts = build_ash_opts(state)
+          {fields_input, controls} = Map.pop(controls, "fields")
+          {operation, controls} = Map.pop(controls, "operation")
 
-        action.type == :read ->
-          operation_call(resource, action, input, ash_opts, operation, state)
+          controls = AshLua.FieldNames.to_internal_input(resource, action, controls)
 
-        true ->
-          t = Atom.to_string(action.type)
+          action_input =
+            AshLua.FieldNames.to_internal_action_input(resource, action, action_input)
 
-          encode_error_response(
-            state,
-            %AshLua.Errors.FieldsError{
-              message: "`operation` is only supported on list operations (this is `#{t}`)",
-              short_message: "operation only on list operations",
-              code: "operation_only_on_list_operations",
-              fields: [],
-              vars: %{"action_type" => t}
-            }
-          )
+          input = Map.merge(action_input, controls)
+          operation = AshLua.FieldNames.to_internal_operation(resource, operation)
+
+          cond do
+            is_nil(operation) ->
+              regular_call(resource, action, input, ash_opts, fields_input, manifest, state)
+
+            action.type == :read ->
+              operation_call(resource, action, input, ash_opts, operation, state)
+
+            true ->
+              t = Atom.to_string(action.type)
+
+              encode_error_response(
+                state,
+                %AshLua.Errors.FieldsError{
+                  message: "`operation` is only supported on list operations (this is `#{t}`)",
+                  short_message: "operation only on list operations",
+                  code: "operation_only_on_list_operations",
+                  fields: [],
+                  vars: %{"action_type" => t}
+                }
+              )
+          end
+
+        {:error, error} ->
+          encode_error_response(state, error)
       end
     end
+  end
+
+  defp split_call_input(input) do
+    {action_input, controls} = Map.pop(input, "input")
+
+    case unexpected_nested_input_keys(controls) do
+      [] ->
+        normalize_action_input(action_input, controls)
+
+      keys ->
+        {:error, nested_input_keys_error(keys)}
+    end
+  end
+
+  defp normalize_action_input(nil, controls), do: {:ok, %{}, controls}
+
+  defp normalize_action_input(action_input, controls) when is_map(action_input) do
+    {:ok, action_input, controls}
+  end
+
+  defp normalize_action_input(_action_input, _controls) do
+    {:error,
+     %AshLua.Errors.FieldsError{
+       message: "`input` must be a table of action input values",
+       short_message: "invalid input",
+       code: "invalid_input_shape",
+       fields: ["input"],
+       vars: %{}
+     }}
+  end
+
+  defp unexpected_nested_input_keys(input) do
+    input
+    |> Map.keys()
+    |> Enum.reject(&reserved_call_input_key?/1)
+    |> Enum.map(&to_string/1)
+    |> Enum.sort()
+  end
+
+  defp reserved_call_input_key?(key) when is_atom(key) do
+    key
+    |> Atom.to_string()
+    |> reserved_call_input_key?()
+  end
+
+  defp reserved_call_input_key?(key) when is_binary(key) do
+    key in @reserved_call_input_keys
+  end
+
+  defp reserved_call_input_key?(_key), do: false
+
+  defp nested_input_keys_error(keys) do
+    joined = Enum.map_join(keys, ", ", &"`#{&1}`")
+
+    %AshLua.Errors.FieldsError{
+      message:
+        "Lua action inputs must be passed under `input`; found top-level key(s): " <>
+          joined,
+      short_message: "invalid input shape",
+      code: "invalid_input_shape",
+      fields: keys,
+      vars: %{"keys" => keys}
+    }
   end
 
   defp regular_call(resource, action, input, ash_opts, fields_input, manifest, state) do
@@ -568,11 +647,11 @@ defmodule AshLua.Runtime do
             {[true, nil], state}
 
           {:error, error} ->
-            encode_error_response(state, error)
+            encode_action_error_response(state, resource, action, error)
         end
 
       {:error, reason} ->
-        encode_error_response(state, reason)
+        encode_action_error_response(state, resource, action, reason)
     end
   end
 
@@ -583,15 +662,25 @@ defmodule AshLua.Runtime do
         {[encoded, nil], state}
 
       {:operation_error, reason} ->
-        encode_error_response(state, reason)
+        encode_action_error_response(state, resource, action, reason)
 
       {:error, error} ->
-        encode_error_response(state, error)
+        encode_action_error_response(state, resource, action, error)
     end
   end
 
   defp encode_error_response(state, error) do
     {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
+    {[nil, encoded], state}
+  end
+
+  defp encode_action_error_response(state, resource, action, error) do
+    encoded_error =
+      error
+      |> Encoder.encode_error()
+      |> AshLua.FieldNames.to_lua_error(resource, action)
+
+    {encoded, state} = Lua.encode!(state, encoded_error)
     {[nil, encoded], state}
   end
 

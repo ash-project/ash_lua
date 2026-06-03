@@ -158,12 +158,12 @@ defmodule AshLua.Docs do
     Wrap a block of operations in a transaction with
     `utils.transaction.transact`:
 
-    ```lua
-    utils.transaction.transact({ "posts.post", "posts.comment" }, function()
-      local post = assert(posts.post.create({ title = "Hello" }))
-      assert(posts.comment.create({ post_id = post.id, body = "First" }))
-      return post.id
-    end)
+     ```lua
+     utils.transaction.transact({ "posts.post", "posts.comment" }, function()
+       local post = assert(posts.post.create({ input = { title = "Hello" } }))
+       assert(posts.comment.create({ input = { post_id = post.id, body = "First" } }))
+       return post.id
+     end)
     ```
 
     The first argument is the list of record-type paths that the transaction
@@ -188,11 +188,11 @@ defmodule AshLua.Docs do
 
     Example with `assert`-driven rollback:
 
-    ```lua
-    local _, err = utils.transaction.transact({ "posts.post" }, function()
-      assert(posts.post.create({ title = "Will Roll Back" }))
-      assert(posts.post.create({ })) -- missing required `title`, raises
-    end)
+     ```lua
+     local _, err = utils.transaction.transact({ "posts.post" }, function()
+       assert(posts.post.create({ input = { title = "Will Roll Back" } }))
+       assert(posts.post.create({ })) -- missing required `title`, raises
+     end)
 
     if err then
       -- Neither post exists; the whole transaction was rolled back.
@@ -201,10 +201,10 @@ defmodule AshLua.Docs do
 
     Example with explicit rollback:
 
-    ```lua
-    local _, err = utils.transaction.transact({ "posts.post" }, function()
-      local p = assert(posts.post.create({ title = "Tentative" }))
-      if not some_business_check(p) then
+     ```lua
+     local _, err = utils.transaction.transact({ "posts.post" }, function()
+       local p = assert(posts.post.create({ input = { title = "Tentative" } }))
+       if not some_business_check(p) then
         utils.transaction.rollback("post failed business check")
       end
       return p.id
@@ -252,7 +252,7 @@ defmodule AshLua.Docs do
     error is `nil`; on failure the result is `nil` and the error is a table.
 
     ```lua
-    local user, err = accounts.user.create({ name = "" })
+     local user, err = accounts.user.create({ input = { name = "" } })
     if err then
       -- handle the failure
     else
@@ -264,7 +264,7 @@ defmodule AshLua.Docs do
     `assert/1`:
 
     ```lua
-    local user = assert(accounts.user.create({ name = "Zach" }))
+     local user = assert(accounts.user.create({ input = { name = "Zach" } }))
     ```
 
     `assert` returns the first value when the second is `nil`, and raises
@@ -330,7 +330,7 @@ defmodule AshLua.Docs do
     manifest = ensure_manifest(manifest_or_opts)
 
     manifest.entrypoints
-    |> Enum.flat_map(&entrypoint_path/1)
+    |> Enum.map(&AshLua.Surface.path_string/1)
     |> Enum.sort()
   end
 
@@ -412,8 +412,8 @@ defmodule AshLua.Docs do
     manifest = ensure_manifest(manifest_or_opts)
 
     case find_callable(manifest, path) do
-      {:ok, {entrypoint, domain_name, resource_name}} ->
-        {:ok, render_callable(manifest, entrypoint, domain_name, resource_name)}
+      {:ok, surface_action} ->
+        {:ok, render_callable(manifest, surface_action)}
 
       :error ->
         {:error, :not_found}
@@ -632,10 +632,11 @@ defmodule AshLua.Docs do
 
   defp reserved_input_keys do
     """
-    ## Reserved input keys
+     ## Reserved input keys
 
-      * `fields` — which fields to return; selection tree (list of names and
-        nested tables). Default: primary key only.
+      * `input` — action input values live inside this table.
+       * `fields` — which fields to return; selection tree (list of names and
+         nested tables). Default: primary key only.
       * `filter` — narrow the result set by field values (list operations
         only). Shape is per-record-type; see each record type's page for the
         fields you can filter on.
@@ -647,23 +648,20 @@ defmodule AshLua.Docs do
       * `operation` — summarize the result set instead of returning records:
         `"count"`, `"exists"`, or `{ "sum" | "avg" | "min" | "max" | "count" |
         "list" | "first", "<field>" }` (list operations only).
+
+    Record type identifiers are documentation identifiers, not necessarily
+    callable Lua namespaces. A flattened callable such as `surface.page_list`
+    can still return a record documented as `surface.page`.
     """
     |> String.trim_trailing()
   end
 
-  defp ensure_manifest(%Manifest{} = m), do: m
+  defp ensure_manifest(%Manifest{} = m), do: AshLua.Surface.for_manifest(m)
 
   defp ensure_manifest(opts) when is_list(opts) do
-    {:ok, manifest} = Manifest.generate(opts)
+    otp_app = Keyword.fetch!(opts, :otp_app)
+    {:ok, manifest} = AshLua.Surface.for_otp_app(otp_app, Keyword.delete(opts, :otp_app))
     manifest
-  end
-
-  defp entrypoint_path(%Manifest.Entrypoint{resource: resource, action: action}) do
-    if AshLua.Resource.Info.expose?(resource) do
-      [resource_path(resource) <> "." <> Atom.to_string(action.name)]
-    else
-      []
-    end
   end
 
   defp record_type_identifier(%Manifest.Resource{module: module}) do
@@ -680,24 +678,7 @@ defmodule AshLua.Docs do
   end
 
   defp find_callable(manifest, path) do
-    Enum.reduce_while(manifest.entrypoints, :error, fn entrypoint, _acc ->
-      if AshLua.Resource.Info.expose?(entrypoint.resource) do
-        domain = Ash.Resource.Info.domain(entrypoint.resource)
-        domain_name = AshLua.Domain.Info.name(domain)
-        resource_name = AshLua.Resource.Info.name(entrypoint.resource)
-
-        candidate =
-          domain_name <> "." <> resource_name <> "." <> Atom.to_string(entrypoint.action.name)
-
-        if candidate == path do
-          {:halt, {:ok, {entrypoint, domain_name, resource_name}}}
-        else
-          {:cont, :error}
-        end
-      else
-        {:cont, :error}
-      end
-    end)
+    AshLua.Surface.find_entrypoint(manifest, path)
   end
 
   defp find_resource_by_path(manifest, path) do
@@ -711,17 +692,15 @@ defmodule AshLua.Docs do
     end)
   end
 
-  defp render_callable(manifest, entrypoint, domain_name, resource_name) do
+  defp render_callable(manifest, entrypoint) do
     resource_module = entrypoint.resource
     action = entrypoint.action
     resource = Manifest.get_resource!(Manifest.resource_lookup(manifest), resource_module)
     type_lookup = Manifest.type_lookup(manifest)
     resource_lookup = Manifest.resource_lookup(manifest)
 
-    path = domain_name <> "." <> resource_name <> "." <> Atom.to_string(action.name)
-
     [
-      "# `#{path}`",
+      "# `#{AshLua.Surface.path_string(entrypoint)}`",
       "**Operation:** `#{operation_kind(action)}`",
       action_description(action),
       input_section(action, resource, resource_lookup, type_lookup),
@@ -744,13 +723,16 @@ defmodule AshLua.Docs do
 
   defp input_section(action, resource, resource_lookup, type_lookup) do
     input_rows =
-      (action.inputs || [])
-      |> Enum.map(&input_row(&1, resource_lookup, type_lookup))
+      Enum.map(
+        action.inputs,
+        &input_row(&1, action, resource, resource_lookup, type_lookup)
+      )
 
     pk_rows = pk_rows(action, resource)
     reserved_rows = reserved_rows(action)
+    action_input_rows = input_rows ++ pk_rows
 
-    rows = input_rows ++ pk_rows ++ reserved_rows
+    rows = input_container_rows(action_input_rows) ++ action_input_rows ++ reserved_rows
 
     if rows == [] do
       "## Input\n\n_None._"
@@ -764,8 +746,28 @@ defmodule AshLua.Docs do
     end
   end
 
-  defp input_row(%Manifest.Argument{} = input, resource_lookup, type_lookup) do
+  defp input_container_rows(action_input_rows) do
+    if action_input_rows != [] do
+      required =
+        if Enum.any?(action_input_rows, &String.contains?(&1, "| yes |")), do: "yes", else: "no"
+
+      [
+        "| `input` | table | #{required} | action input values |"
+      ]
+    else
+      []
+    end
+  end
+
+  defp input_row(
+         %Manifest.Argument{} = input,
+         action,
+         resource,
+         resource_lookup,
+         type_lookup
+       ) do
     required = if not input.allow_nil? and not input.has_default?, do: "yes", else: "no"
+    name = input_name(input, action, resource)
 
     notes =
       [
@@ -776,8 +778,19 @@ defmodule AshLua.Docs do
       |> Enum.reject(&(is_nil(&1) or &1 == ""))
       |> Enum.join("; ")
 
-    "| `#{input.name}` | #{type_link(input.type, resource_lookup, type_lookup)} | #{required} | #{notes} |"
+    "| `input.#{name}` | #{type_link(input.type, resource_lookup, type_lookup)} | #{required} | #{notes} |"
   end
+
+  defp input_name(
+         %Manifest.Argument{name: name},
+         %Manifest.Action{name: action_name, type: type},
+         resource
+       )
+       when type in [:read, :create, :update, :destroy, :action] do
+    AshLua.FieldNames.to_lua_input_name(resource.module, action_name, type, name)
+  end
+
+  defp input_name(%Manifest.Argument{name: name}, _action, _resource), do: name
 
   defp pk_rows(%Manifest.Action{type: type}, resource)
        when type in [:update, :delete, :destroy] do
@@ -788,7 +801,9 @@ defmodule AshLua.Docs do
           _ -> "_unknown_"
         end
 
-      "| `#{pk}` | #{type_text} | yes | identifies the record |"
+      lua_name = AshLua.FieldNames.to_lua_field_name(resource.module, pk)
+
+      "| `input.#{lua_name}` | #{type_text} | yes | identifies the record |"
     end)
   end
 
@@ -904,7 +919,11 @@ defmodule AshLua.Docs do
         d -> "\n\n" <> d
       end
 
-    primary_key_line = "**Primary key:** #{Enum.map_join(resource.primary_key, ", ", &"`#{&1}`")}"
+    primary_key_line =
+      "**Primary key:** " <>
+        Enum.map_join(resource.primary_key, ", ", fn field ->
+          "`#{AshLua.FieldNames.to_lua_field_name(resource.module, field)}`"
+        end)
 
     fields_section =
       case Manifest.Resource.all_fields(resource) do
@@ -914,7 +933,7 @@ defmodule AshLua.Docs do
         fields ->
           rows =
             Enum.map_join(fields, "\n", fn %Manifest.Field{} = f ->
-              row_field(f, resource_lookup, type_lookup)
+              row_field(resource, f, resource_lookup, type_lookup)
             end)
 
           "\n\n## Fields\n\n| Name | Type | Notes |\n|------|------|-------|\n" <> rows
@@ -929,7 +948,8 @@ defmodule AshLua.Docs do
           rows =
             Enum.map_join(rels, "\n", fn r ->
               dest = record_link(r.destination, resource_lookup)
-              "| `#{r.name}` | #{r.cardinality} | #{dest} |"
+              name = AshLua.FieldNames.to_lua_field_name(resource.module, r.name)
+              "| `#{name}` | #{r.cardinality} | #{dest} |"
             end)
 
           "\n\n## Related records\n\n| Name | Cardinality | Type |\n|------|-------------|------|\n" <>
@@ -963,7 +983,7 @@ defmodule AshLua.Docs do
       fields ->
         body =
           Enum.map_join(fields, "\n\n", fn field ->
-            field_filter_block(field, resource_lookup, type_lookup, op_display_map)
+            field_filter_block(resource, field, resource_lookup, type_lookup, op_display_map)
           end)
 
         "\n\n## Filterable fields\n\nThe `filter` reserved input on list operations accepts these per-field forms. See the **Filters** topic for the overall expression shape, including boolean combinators.\n\n" <>
@@ -971,12 +991,19 @@ defmodule AshLua.Docs do
     end
   end
 
-  defp field_filter_block(%Manifest.Field{} = field, resource_lookup, type_lookup, op_display_map) do
+  defp field_filter_block(
+         %Manifest.Resource{} = resource,
+         %Manifest.Field{} = field,
+         resource_lookup,
+         type_lookup,
+         op_display_map
+       ) do
     operators = field.filter_operators || []
     functions = field.filter_functions || []
     custom_exprs = field.filter_custom_expressions || []
 
-    header = "### `#{field.name}` (#{type_link(field.type, resource_lookup, type_lookup)})"
+    header =
+      "### `#{AshLua.FieldNames.to_lua_field_name(resource.module, field.name)}` (#{type_link(field.type, resource_lookup, type_lookup)})"
 
     lines =
       Enum.map(
@@ -1072,7 +1099,7 @@ defmodule AshLua.Docs do
       resource
       |> Manifest.Resource.all_fields()
       |> Enum.filter(& &1.sortable?)
-      |> Enum.map(& &1.name)
+      |> Enum.map(&AshLua.FieldNames.to_lua_field_name(resource.module, &1.name))
 
     case sortable do
       [] ->
@@ -1107,7 +1134,7 @@ defmodule AshLua.Docs do
         fields ->
           rows =
             Enum.map_join(fields, "\n", fn %Manifest.Field{} = f ->
-              row_field(f, resource_lookup, type_lookup)
+              row_field(resource, f, resource_lookup, type_lookup)
             end)
 
           "\n\n## Fields\n\n| Name | Type | Notes |\n|------|------|-------|\n" <> rows
@@ -1123,7 +1150,12 @@ defmodule AshLua.Docs do
     header <> "\n\n" <> body
   end
 
-  defp row_field(%Manifest.Field{} = f, resource_lookup, type_lookup) do
+  defp row_field(
+         %Manifest.Resource{} = resource,
+         %Manifest.Field{} = f,
+         resource_lookup,
+         type_lookup
+       ) do
     notes =
       [
         f.description,
@@ -1137,7 +1169,8 @@ defmodule AshLua.Docs do
       |> Enum.reject(&(is_nil(&1) or &1 == ""))
       |> Enum.join("; ")
 
-    "| `#{f.name}` | #{type_link(f.type, resource_lookup, type_lookup)} | #{notes} |"
+    name = AshLua.FieldNames.to_lua_field_name(resource.module, f.name)
+    "| `#{name}` | #{type_link(f.type, resource_lookup, type_lookup)} | #{notes} |"
   end
 
   defp kind_note(%Manifest.Field{kind: :calculation}), do: "computed"
@@ -1273,13 +1306,7 @@ defmodule AshLua.Docs do
   defp collect_search_candidates(manifest) do
     callables =
       manifest.entrypoints
-      |> Enum.flat_map(fn entrypoint ->
-        if AshLua.Resource.Info.expose?(entrypoint.resource) do
-          [callable_candidate(entrypoint)]
-        else
-          []
-        end
-      end)
+      |> Enum.map(&callable_candidate/1)
 
     record_types =
       manifest.resources
@@ -1294,21 +1321,21 @@ defmodule AshLua.Docs do
     named_types = Enum.map(manifest.types, &named_type_candidate/1)
     topics = Enum.map(@topic_ids, &topic_candidate/1)
 
-    callables ++ record_types ++ named_types ++ topics
+    record_types ++ callables ++ named_types ++ topics
   end
 
   defp callable_candidate(%Manifest.Entrypoint{} = entrypoint) do
     %{
-      id: resource_path(entrypoint.resource) <> "." <> Atom.to_string(entrypoint.action.name),
+      id: AshLua.Surface.path_string(entrypoint),
       kind: "operation",
       summary: callable_summary(entrypoint)
     }
   end
 
-  defp callable_summary(%Manifest.Entrypoint{action: action, resource: resource}) do
+  defp callable_summary(%Manifest.Entrypoint{action: action} = entrypoint) do
     case action.description do
-      nil -> "#{operation_kind(action)} operation on `#{resource_path(resource)}`"
-      "" -> "#{operation_kind(action)} operation on `#{resource_path(resource)}`"
+      nil -> "#{operation_kind(action)} operation `#{AshLua.Surface.path_string(entrypoint)}`"
+      "" -> "#{operation_kind(action)} operation `#{AshLua.Surface.path_string(entrypoint)}`"
       desc -> desc
     end
   end
@@ -1357,10 +1384,13 @@ defmodule AshLua.Docs do
   defp score_candidate(%{id: id, summary: summary}, needle) do
     id_l = String.downcase(id)
     sum_l = summary |> to_string() |> String.downcase()
+    segments = String.split(id_l, ".")
 
     cond do
       id_l == needle -> 1000
-      String.starts_with?(id_l, needle) -> 800
+      String.starts_with?(id_l, needle <> ".") -> 800
+      needle in segments -> 700
+      String.starts_with?(id_l, needle) -> 600
       String.contains?(id_l, needle) -> 500
       String.contains?(sum_l, needle) -> 100
       true -> 0

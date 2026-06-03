@@ -13,7 +13,7 @@ defmodule AshLuaTest do
         AshLua.eval!(
           """
           local post, err = posts.post.create({
-            title = "Hello", body = "World",
+            input = { title = "Hello", body = "World" },
             fields = { "id" }
           })
           assert(err == nil)
@@ -30,7 +30,7 @@ defmodule AshLuaTest do
       {[nil, err], _lua} =
         AshLua.eval!(
           """
-          local post, err = posts.post.create({ body = "no title" })
+          local post, err = posts.post.create({ input = { body = "no title" } })
           return post, err
           """,
           otp_app: :ash_lua
@@ -53,7 +53,7 @@ defmodule AshLuaTest do
         AshLua.eval!(
           """
           local post = assert(posts.post.create({
-            title = "Assert works", body = "yes",
+            input = { title = "Assert works", body = "yes" },
             fields = { "title" }
           }))
           return post.title
@@ -66,7 +66,7 @@ defmodule AshLuaTest do
       assert_raise Lua.RuntimeException, fn ->
         AshLua.eval!(
           """
-          assert(posts.post.create({ body = "no title" }))
+          assert(posts.post.create({ input = { body = "no title" } }))
           """,
           otp_app: :ash_lua
         )
@@ -129,7 +129,7 @@ defmodule AshLuaTest do
         AshLua.eval!(
           """
           local p = assert(posts.post.update({
-            id = "#{post.id}", title = "Updated",
+            input = { id = "#{post.id}", title = "Updated" },
             fields = { "title" }
           }))
           return p.title
@@ -142,7 +142,7 @@ defmodule AshLuaTest do
       {[true_value], _lua} =
         AshLua.eval!(
           """
-          local _, err = posts.post.destroy({ id = "#{post.id}" })
+          local _, err = posts.post.destroy({ input = { id = "#{post.id}" } })
           return err == nil
           """,
           otp_app: :ash_lua
@@ -159,7 +159,7 @@ defmodule AshLuaTest do
         AshLua.eval!(
           """
           local p = assert(posts.post.publish({
-            id = "#{post.id}",
+            input = { id = "#{post.id}" },
             fields = { "published" }
           }))
           return p.published
@@ -174,7 +174,9 @@ defmodule AshLuaTest do
       {[count], _lua} =
         AshLua.eval!(
           """
-          local n = assert(posts.post.word_count({ text = "one two three four" }))
+          local n = assert(posts.post.word_count({
+            input = { text = "one two three four" }
+          }))
           return n
           """,
           otp_app: :ash_lua

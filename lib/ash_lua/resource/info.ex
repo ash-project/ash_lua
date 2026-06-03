@@ -26,6 +26,18 @@ defmodule AshLua.Resource.Info do
     Extension.get_opt(resource, [:lua], :expose?, true)
   end
 
+  @doc "Lua-facing field name mappings configured for this resource."
+  @spec field_names(Ash.Resource.t() | Spark.Dsl.t()) :: keyword(String.t())
+  def field_names(resource) do
+    Extension.get_opt(resource, [:lua], :field_names, [])
+  end
+
+  @doc "Lua-facing argument name mappings configured for this resource."
+  @spec argument_names(Ash.Resource.t() | Spark.Dsl.t()) :: keyword(keyword(String.t()))
+  def argument_names(resource) do
+    Extension.get_opt(resource, [:lua], :argument_names, [])
+  end
+
   defp default_name(resource) when is_atom(resource) do
     resource
     |> Module.split()

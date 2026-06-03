@@ -129,7 +129,8 @@ defmodule AshLua.DocsTest do
 
       assert md =~ "# `posts.post.create`"
       assert md =~ "**Operation:** `create`"
-      assert md =~ "| `title` |"
+      assert md =~ "| `input` | table | yes |"
+      assert md =~ "| `input.title` |"
       assert md =~ "| `fields` |"
       assert md =~ "default = primary key only"
 
@@ -158,17 +159,17 @@ defmodule AshLua.DocsTest do
       {:ok, delete_md} = AshLua.Docs.callable_doc(opts(), "posts.post.destroy")
 
       assert update_md =~ "**Operation:** `update`"
-      assert update_md =~ "| `id` |"
+      assert update_md =~ "| `input.id` |"
       assert update_md =~ "identifies the record"
       assert delete_md =~ "**Operation:** `delete`"
-      assert delete_md =~ "| `id` |"
+      assert delete_md =~ "| `input.id` |"
     end
 
     test "generic (call) renders its inputs and return type" do
       {:ok, md} = AshLua.Docs.callable_doc(opts(), "posts.post.word_count")
 
       assert md =~ "**Operation:** `call`"
-      assert md =~ "| `text` | `string` | yes"
+      assert md =~ "| `input.text` | `string` | yes"
       assert md =~ "`integer`"
       refute md =~ "selection tree"
     end

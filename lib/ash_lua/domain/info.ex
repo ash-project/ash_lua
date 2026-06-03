@@ -5,6 +5,7 @@
 defmodule AshLua.Domain.Info do
   @moduledoc "Introspection helpers for `AshLua.Domain`."
 
+  alias AshLua.Domain.Namespace
   alias Spark.Dsl.Extension
 
   @doc """
@@ -18,6 +19,15 @@ defmodule AshLua.Domain.Info do
       nil -> default_name(domain)
       name -> name
     end
+  end
+
+  @doc "Explicit public Lua namespaces configured on the domain."
+  @spec namespaces(Ash.Domain.t() | Spark.Dsl.t()) :: [Namespace.t()]
+  def namespaces(domain) do
+    domain
+    |> Extension.get_entities([:lua])
+    |> List.wrap()
+    |> Enum.filter(&match?(%Namespace{}, &1))
   end
 
   defp default_name(domain) when is_atom(domain) do

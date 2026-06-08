@@ -61,6 +61,14 @@ defmodule AshLua.Test.Posts.Post do
       public? true
     end
 
+    attribute :tag, :ci_string do
+      public? true
+    end
+
+    attribute :price, AshLua.Test.Posts.Money do
+      public? true
+    end
+
     attribute :schedule_config, AshLua.Test.Posts.ScheduleConfig do
       public? true
     end

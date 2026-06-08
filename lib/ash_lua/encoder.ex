@@ -72,15 +72,28 @@ defmodule AshLua.Encoder do
   def encode_result(nil), do: nil
   def encode_result(true), do: true
   def encode_result(false), do: false
-  def encode_result(value) when is_binary(value), do: value
+
+  # Valid UTF-8 strings pass through; non-UTF8 binaries (e.g. `Ash.Type.Binary`
+  # payloads) are base64-encoded so they survive the trip through Lua/JSON.
+  def encode_result(value) when is_binary(value) do
+    if String.valid?(value), do: value, else: Base.encode64(value)
+  end
+
   def encode_result(value) when is_number(value), do: value
   def encode_result(value) when is_atom(value), do: Atom.to_string(value)
 
+  def encode_result(%Ash.CiString{} = ci), do: Ash.CiString.value(ci)
   def encode_result(%Decimal{} = d), do: Decimal.to_string(d, :normal)
   def encode_result(%Date{} = d), do: Date.to_iso8601(d)
   def encode_result(%Time{} = t), do: Time.to_iso8601(t)
   def encode_result(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   def encode_result(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_iso8601(ndt)
+
+  # `Duration` (the struct) exists only on Elixir ≥ 1.17; guard the clause so
+  # this still compiles on the project's lower supported bound (~> 1.15).
+  if Code.ensure_loaded?(Duration) do
+    def encode_result(%Duration{} = d), do: Duration.to_iso8601(d)
+  end
 
   def encode_result(%Ash.Page.Offset{} = page) do
     %{
@@ -156,6 +169,14 @@ defmodule AshLua.Encoder do
     }
   end
 
+  # Mirror the template path's union shape (see `encode_with_template/2`) so a
+  # union reaches Lua as `{type, value}` whether or not a field template was
+  # applied. The inner value still goes through `encode_result/1` so it lands
+  # as its proper type (CiString → string, Decimal → string, etc.).
+  def encode_result(%Ash.Union{type: member, value: inner}) do
+    %{"type" => Atom.to_string(member), "value" => encode_result(inner)}
+  end
+
   def encode_result(%_struct{} = record) do
     record
     |> Map.from_struct()
@@ -168,6 +189,12 @@ defmodule AshLua.Encoder do
   def encode_result(value) when is_map(value) do
     Map.new(value, fn {k, v} -> {stringify_key(k), encode_result(v)} end)
   end
+
+  # Raw Erlang terms with no Lua representation. They can reach the
+  # template-less paths (the eval action's `:term` slot, a raw Lua return);
+  # surface an opaque marker rather than crashing the downstream encoder.
+  def encode_result(value) when is_pid(value) or is_reference(value) or is_port(value),
+    do: %{"opaque" => "term"}
 
   def encode_result(value), do: value
 
@@ -262,7 +289,34 @@ defmodule AshLua.Encoder do
 
   def encode_with_template(value, {:union, _entries}), do: encode_result(value)
 
+  # Scalar leaf. A custom type's `to_lua/2` callback wins; otherwise we apply
+  # AshLua's built-in defaults. The callback's return value is still run
+  # through `encode_result/1` so nested Decimals/dates/etc. are normalized.
+  def encode_with_template(value, {:scalar, type}), do: encode_scalar(value, type)
+
   def encode_with_template(value, _template), do: encode_result(value)
+
+  defp encode_scalar(nil, _type), do: nil
+
+  defp encode_scalar(value, %Ash.Info.Manifest.Type{} = type) do
+    module = Ash.Info.Manifest.Type.effective_module(type)
+
+    case AshLua.Type.to_lua(module, value, type.constraints || []) do
+      {:ok, encoded} -> encode_result(encoded)
+      :default -> encode_builtin_scalar(value, type.kind)
+    end
+  end
+
+  # These builtin kinds carry values with no faithful Lua representation
+  # (raw Erlang terms, functions, file/vector structs). Surface an opaque
+  # marker by kind so the consumer sees a non-data slot instead of a
+  # `Map.from_struct`'d internal or a crash.
+  defp encode_builtin_scalar(_value, kind) when kind in [:term, :function, :file, :vector],
+    do: %{"opaque" => Atom.to_string(kind)}
+
+  # Everything else: built-in special behavior (CiString, Decimal, dates,
+  # durations) plus JSON-style passthrough live in `encode_result/1`.
+  defp encode_builtin_scalar(value, _kind), do: encode_result(value)
 
   defp encode_resource_entry(record, {:attr, resource, name, sub}) do
     {AshLua.FieldNames.to_lua_field_name(resource, name),

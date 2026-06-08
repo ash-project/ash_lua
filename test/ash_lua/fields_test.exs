@@ -134,6 +134,37 @@ defmodule AshLua.FieldsTest do
       assert comments == ["first", "second"]
     end
 
+    test "ci_string attribute encodes as a plain Lua string" do
+      {:ok, _} = Ash.create(Post, %{title: "Post", tag: "Featured"}, action: :create)
+
+      result =
+        run!("""
+        local r = assert(posts.post.read({ fields = { "title", "tag" } }))
+        return r
+        """)
+
+      record = first_record(result)
+      # %Ash.CiString{} must come through as a bare string, not a struct map.
+      assert record["tag"] == "Featured"
+      assert is_binary(record["tag"])
+    end
+
+    test "custom type controls its own encoding via to_lua/2" do
+      {:ok, _} = Ash.create(Post, %{title: "Post", price: 1599}, action: :create)
+
+      result =
+        run!("""
+        local r = assert(posts.post.read({ fields = { "title", "price" } }))
+        return r
+        """)
+
+      record = first_record(result)
+      # AshLua.Test.Posts.Money implements to_lua/2 → map, not a bare integer.
+      price = deep(record["price"])
+      assert price["cents"] == 1599
+      assert price["dollars"] == 15.99
+    end
+
     test "unknown field surfaces a Lua-side error" do
       {[nil, err], _lua} =
         AshLua.eval!(

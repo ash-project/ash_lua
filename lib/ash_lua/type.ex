@@ -4,11 +4,15 @@
 
 defmodule AshLua.Type do
   @moduledoc """
-  Extends an Ash type with Lua-facing metadata.
+  Extends an Ash type with Lua-facing metadata and encoding.
 
   Add `use AshLua.Type` to a custom type module (typically alongside
-  `use Ash.Type` or `use Ash.Type.NewType`) and implement `type_name/0` to
-  control the name surfaced in generated documentation (`AshLua.Docs`) for
+  `use Ash.Type` or `use Ash.Type.NewType`) and implement any of the optional
+  callbacks.
+
+  ## `type_name/0`
+
+  Controls the name surfaced in generated documentation (`AshLua.Docs`) for
   that type.
 
       defmodule MyApp.Slug do
@@ -23,16 +27,56 @@ defmodule AshLua.Type do
   from the module itself: the last module segment, with `Ash.Type.` prefixed
   modules underscored (`Ash.Type.UUID` → `"uuid"`, `Ash.Type.Boolean` →
   `"boolean"`).
+
+  ## `to_lua/2`
+
+  Controls how a value of this type is encoded for the Lua side. Return any
+  Lua-friendly value (maps/lists/strings/numbers/booleans/nil) — it is run
+  through the standard normalization afterwards, so nested `Decimal`/`Date`/
+  etc. are still handled for you.
+
+      defmodule MyApp.Money do
+        use Ash.Type.NewType, subtype_of: :integer
+        use AshLua.Type
+
+        @impl AshLua.Type
+        def to_lua(cents, _constraints) do
+          %{"cents" => cents}
+        end
+      end
+
+  When a type does not implement `to_lua/2`, AshLua falls back to its built-in
+  defaults: special handling for the Ash builtin types that need it (CiString,
+  Decimal, dates/times, durations), and a plain JSON-style encoding for
+  everything else.
   """
 
   @callback type_name() :: String.t()
-  @optional_callbacks type_name: 0
+  @callback to_lua(value :: term(), constraints :: Keyword.t()) :: term()
+  @optional_callbacks type_name: 0, to_lua: 2
 
   defmacro __using__(_opts) do
     quote do
       @behaviour AshLua.Type
     end
   end
+
+  @doc """
+  Encodes a value using the type module's `to_lua/2` callback, if it defines one.
+
+  Returns `{:ok, encoded}` when the module implements `to_lua/2`, or `:default`
+  when it doesn't — letting the caller fall back to built-in encoding.
+  """
+  @spec to_lua(module() | nil, term(), Keyword.t()) :: {:ok, term()} | :default
+  def to_lua(module, value, constraints) when is_atom(module) and not is_nil(module) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :to_lua, 2) do
+      {:ok, module.to_lua(value, constraints)}
+    else
+      :default
+    end
+  end
+
+  def to_lua(_module, _value, _constraints), do: :default
 
   @doc """
   Returns the Lua-facing type name for the given module.

@@ -278,9 +278,13 @@ defmodule AshLua.Fields do
     select_for_typed_map(type, ast, ctx)
   end
 
-  # Primitive — no sub-selection possible
-  defp select_for_type(%Manifest.Type{}, :default, _ctx), do: {[], [], :passthrough}
-  defp select_for_type(%Manifest.Type{}, [], _ctx), do: {[], [], :passthrough}
+  # Primitive — no sub-selection possible. Carry the resolved type so the
+  # encoder can run the value through its Ash type's dump callback before
+  # normalizing to a Lua-friendly primitive. This makes leaf encoding
+  # type-aware (CiString, custom NewTypes, etc.) rather than relying solely
+  # on the value-shape clauses in `AshLua.Encoder.encode_result/1`.
+  defp select_for_type(%Manifest.Type{} = type, :default, _ctx), do: {[], [], {:scalar, type}}
+  defp select_for_type(%Manifest.Type{} = type, [], _ctx), do: {[], [], {:scalar, type}}
 
   defp select_for_type(%Manifest.Type{kind: kind}, _ast, _ctx) do
     k = name_str(kind)

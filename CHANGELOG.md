@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.1.4](https://github.com/ash-project/ash_lua/compare/v0.1.3...v0.1.4) (2026-06-08)
+
+
+
+
+### Improvements:
+
+* support custom scalar encoding, and better defaults by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.1.3](https://github.com/ash-project/ash_lua/compare/v0.1.2...v0.1.3) (2026-06-01)
 
 

@@ -9,7 +9,7 @@ defmodule AshLua.MixProject do
   An Ash extension for embedding Lua scripts with a consistent actor, tenant, and context.
   """
 
-  @version "0.1.4"
+  @version "0.1.5"
 
   @source_url "https://github.com/ash-project/ash_lua"
 

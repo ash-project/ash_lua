@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.1.5](https://github.com/ash-project/ash_lua/compare/v0.1.4...v0.1.5) (2026-06-09)
+
+
+
+
+### Improvements:
+
+* support encoding forbidden fields by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.1.4](https://github.com/ash-project/ash_lua/compare/v0.1.3...v0.1.4) (2026-06-08)
 
 

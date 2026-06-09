@@ -15,5 +15,7 @@ defmodule AshLua.Test.Posts do
     resource AshLua.Test.Posts.MCPActions
     resource AshLua.Test.Posts.CustomMCPActions
     resource AshLua.Test.Posts.MnesiaNote
+    resource AshLua.Test.Posts.SecretPost
+    resource AshLua.Test.Posts.ForbiddenDisplayMCPActions
   end
 end

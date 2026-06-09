@@ -11,6 +11,18 @@ defmodule AshLua.Encoder do
   `NaiveDateTime`/`Time` as their canonical string forms, and structs as plain attribute maps
   (no relationships, no calculations, no aggregates unless they happen to be already loaded as a
   field value).
+
+  ## Forbidden fields
+
+  Ash replaces fields the actor isn't allowed to see with `%Ash.ForbiddenField{}`. The encoder's
+  treatment is controlled by a per-process mode (defaulting to `:hide`):
+
+    * `:hide` — the field is stripped (scalars/`rel_one` become `nil`, `rel_many` becomes `[]`),
+      so the consumer can't distinguish "forbidden" from "absent".
+    * `:display` — the field is rendered as the opaque marker `%{"opaque" => "forbidden"}`, so the
+      consumer sees the field exists but is inaccessible.
+
+  Set the mode by calling `encode_result/2` / `encode_with_template/3` with `:hide` or `:display`.
   """
 
   @doc """
@@ -61,6 +73,22 @@ defmodule AshLua.Encoder do
   end
 
   defp keyword_pairs?(_), do: false
+
+  @forbidden_mode_key {__MODULE__, :forbidden_fields_mode}
+  @forbidden_marker %{"opaque" => "forbidden"}
+
+  @typedoc "How forbidden fields are rendered. See the module docs."
+  @type forbidden_mode :: :hide | :display
+
+  @doc """
+  Like `encode_result/1`, but runs with the given forbidden-field `mode` in effect
+  (see the module docs). `:hide` strips forbidden fields; `:display` renders them as
+  `#{inspect(@forbidden_marker)}`.
+  """
+  @spec encode_result(term(), forbidden_mode()) :: term()
+  def encode_result(value, mode) when mode in [:hide, :display] do
+    with_forbidden_mode(mode, fn -> encode_result(value) end)
+  end
 
   @doc """
   Encodes an Ash action result to a Lua-friendly value (plain Elixir maps/lists/primitives
@@ -177,6 +205,11 @@ defmodule AshLua.Encoder do
     %{"type" => Atom.to_string(member), "value" => encode_result(inner)}
   end
 
+  # A field hidden by authorization. In `:hide` mode it's dropped (nil); in
+  # `:display` mode it surfaces as the opaque "forbidden" marker. Must precede
+  # the generic `%_struct{}` clause so the struct's internals never leak.
+  def encode_result(%Ash.ForbiddenField{}), do: forbidden_value(nil)
+
   def encode_result(%_struct{} = record) do
     record
     |> Map.from_struct()
@@ -201,8 +234,36 @@ defmodule AshLua.Encoder do
   # Within a struct, an unloaded association comes back as
   # %Ash.NotLoaded{}; render those as nil rather than as Ash internals.
   defp encode_field(%Ash.NotLoaded{}), do: nil
-  defp encode_field(%Ash.ForbiddenField{}), do: nil
+  defp encode_field(%Ash.ForbiddenField{}), do: forbidden_value(nil)
   defp encode_field(other), do: encode_result(other)
+
+  # Runs `fun` with the forbidden-field rendering `mode` stashed in the process
+  # dictionary, restoring the prior value afterward. Encoding is synchronous
+  # within a single process, so this scopes cleanly without threading the mode
+  # through every recursive clause.
+  defp with_forbidden_mode(mode, fun) do
+    previous = Process.put(@forbidden_mode_key, mode)
+
+    try do
+      fun.()
+    after
+      case previous do
+        nil -> Process.delete(@forbidden_mode_key)
+        prev -> Process.put(@forbidden_mode_key, prev)
+      end
+    end
+  end
+
+  defp forbidden_mode, do: Process.get(@forbidden_mode_key, :hide)
+
+  # `hide_default` is what the slot collapses to when forbidden fields are
+  # hidden (nil for scalars/`rel_one`, `[]` for `rel_many`).
+  defp forbidden_value(hide_default) do
+    case forbidden_mode() do
+      :display -> @forbidden_marker
+      _ -> hide_default
+    end
+  end
 
   defp skip_struct_field?(:__meta__), do: true
   defp skip_struct_field?(:__order__), do: true
@@ -217,6 +278,15 @@ defmodule AshLua.Encoder do
   defp stringify_key(k), do: to_string(k)
 
   @doc """
+  Like `encode_with_template/2`, but runs with the given forbidden-field `mode`
+  in effect (see the module docs).
+  """
+  @spec encode_with_template(term(), term(), forbidden_mode()) :: term()
+  def encode_with_template(value, template, mode) when mode in [:hide, :display] do
+    with_forbidden_mode(mode, fn -> encode_with_template(value, template) end)
+  end
+
+  @doc """
   Encodes a result against a template produced by `AshLua.Fields.for_action/4`.
 
   Walks the template recursively, pulling only the requested fields from records,
@@ -228,6 +298,11 @@ defmodule AshLua.Encoder do
 
   def encode_with_template(nil, _template), do: nil
   def encode_with_template(value, :passthrough), do: encode_result(value)
+
+  # A field hidden by authorization, reached via the `:attr` / `:calc` template
+  # paths. Hidden → nil; displayed → opaque marker. (rel_one/rel_many handle
+  # their own forbidden cases in `encode_resource_entry/2`.)
+  def encode_with_template(%Ash.ForbiddenField{}, _template), do: forbidden_value(nil)
 
   def encode_with_template(%Ash.Page.Offset{} = page, {:array, sub}) do
     results = Enum.map(page.results, &encode_with_template(&1, sub))
@@ -296,8 +371,6 @@ defmodule AshLua.Encoder do
 
   def encode_with_template(value, _template), do: encode_result(value)
 
-  defp encode_scalar(nil, _type), do: nil
-
   defp encode_scalar(value, %Ash.Info.Manifest.Type{} = type) do
     module = Ash.Info.Manifest.Type.effective_module(type)
 
@@ -339,7 +412,7 @@ defmodule AshLua.Encoder do
     encoded =
       case value do
         %Ash.NotLoaded{} -> nil
-        %Ash.ForbiddenField{} -> nil
+        %Ash.ForbiddenField{} -> forbidden_value(nil)
         nil -> nil
         record_or_struct -> encode_with_template(record_or_struct, sub)
       end
@@ -353,7 +426,7 @@ defmodule AshLua.Encoder do
     encoded =
       case value do
         %Ash.NotLoaded{} -> []
-        %Ash.ForbiddenField{} -> []
+        %Ash.ForbiddenField{} -> forbidden_value([])
         list when is_list(list) -> Enum.map(list, &encode_with_template(&1, sub))
         _ -> []
       end
@@ -361,11 +434,12 @@ defmodule AshLua.Encoder do
     {AshLua.FieldNames.to_lua_field_name(resource, name), encoded}
   end
 
+  # `%Ash.NotLoaded{}` collapses to nil; `%Ash.ForbiddenField{}` is passed
+  # through so the downstream encoder (`encode_with_template/2` for calcs,
+  # `encode_result/1` for aggregates) applies the configured forbidden mode.
   defp unwrap_loaded(%Ash.NotLoaded{}), do: nil
-  defp unwrap_loaded(%Ash.ForbiddenField{}), do: nil
   defp unwrap_loaded(value), do: value
 
-  defp normalize_typed_map(nil), do: %{}
   defp normalize_typed_map(%_{} = struct), do: Map.from_struct(struct)
   defp normalize_typed_map(map) when is_map(map), do: map
   defp normalize_typed_map(list) when is_list(list), do: Map.new(list)

@@ -58,7 +58,6 @@ defmodule AshLua.Fields do
   defp describe_kind(item) when is_integer(item), do: "an integer"
   defp describe_kind(item) when is_float(item), do: "a number"
   defp describe_kind(item) when is_list(item), do: "a list"
-  defp describe_kind(item) when is_map(item), do: "a table"
   defp describe_kind(item) when is_tuple(item), do: "a tuple"
   defp describe_kind(_), do: "an unknown value"
 

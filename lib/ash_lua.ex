@@ -56,6 +56,9 @@ defmodule AshLua do
     * `:actor`, `:tenant`, `:context` — host-supplied; merged into every Ash call.
     * `:manifest` — a pre-built `%Ash.Info.Manifest{}` to skip regeneration.
     * `:lua` — a pre-built `%Lua{}` to install bindings on (e.g. with extra `Lua.set!/3` callbacks).
+    * `:forbidden_fields` — `:hide` (default) strips fields hidden by authorization from results;
+      `:display` renders them as the opaque marker `%{"opaque" => "forbidden"}` so the consumer can
+      tell a forbidden field apart from an absent one.
     * `:decode` — forwarded to `Lua.eval!/3`; defaults to `true`.
   """
   @spec eval!(String.t(), keyword()) :: {list(), Lua.t()}
@@ -66,8 +69,8 @@ defmodule AshLua do
   @doc """
   Builds a `%Lua{}` VM with Ash bindings installed, ready for repeated `Lua.eval!/2` calls.
 
-  Accepts the same `:otp_app` / `:actor` / `:tenant` / `:context` / `:manifest` / `:lua`
-  options as `eval!/2`.
+  Accepts the same `:otp_app` / `:actor` / `:tenant` / `:context` / `:manifest` / `:lua` /
+  `:forbidden_fields` options as `eval!/2`.
   """
   @spec new(keyword()) :: Lua.t()
   def new(opts \\ []) do

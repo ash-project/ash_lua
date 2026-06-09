@@ -60,6 +60,12 @@ defmodule AshLua.EvalActions do
         type: :atom,
         doc:
           "OTP app to scan when building the manifest. Defaults to the agent resource's domain's `:otp_app`."
+      ],
+      forbidden_fields: [
+        type: {:in, [:hide, :display]},
+        default: :hide,
+        doc:
+          "How to render fields hidden by authorization in `:eval` results. `:hide` (default) strips them; `:display` renders them as the opaque marker `%{\"opaque\" => \"forbidden\"}` so the agent can tell a forbidden field apart from an absent one."
       ]
     ],
     entities: [@expose]

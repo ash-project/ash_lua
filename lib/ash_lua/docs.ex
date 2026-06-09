@@ -931,9 +931,11 @@ defmodule AshLua.Docs do
           ""
 
         fields ->
+          protected = protected_fields(resource)
+
           rows =
             Enum.map_join(fields, "\n", fn %Manifest.Field{} = f ->
-              row_field(resource, f, resource_lookup, type_lookup)
+              row_field(resource, f, resource_lookup, type_lookup, protected)
             end)
 
           "\n\n## Fields\n\n| Name | Type | Notes |\n|------|------|-------|\n" <> rows
@@ -1132,9 +1134,11 @@ defmodule AshLua.Docs do
           ""
 
         fields ->
+          protected = protected_fields(resource)
+
           rows =
             Enum.map_join(fields, "\n", fn %Manifest.Field{} = f ->
-              row_field(resource, f, resource_lookup, type_lookup)
+              row_field(resource, f, resource_lookup, type_lookup, protected)
             end)
 
           "\n\n## Fields\n\n| Name | Type | Notes |\n|------|------|-------|\n" <> rows
@@ -1154,7 +1158,8 @@ defmodule AshLua.Docs do
          %Manifest.Resource{} = resource,
          %Manifest.Field{} = f,
          resource_lookup,
-         type_lookup
+         type_lookup,
+         protected
        ) do
     notes =
       [
@@ -1162,6 +1167,7 @@ defmodule AshLua.Docs do
         kind_note(f),
         if(f.primary_key?, do: "primary key"),
         if(f.sensitive?, do: "sensitive"),
+        if(MapSet.member?(protected, f.name), do: "may be hidden by authorization"),
         if(f.kind == :calculation and f.arguments not in [nil, []],
           do: "input: " <> args_summary(f.arguments)
         )
@@ -1171,6 +1177,23 @@ defmodule AshLua.Docs do
 
     name = AshLua.FieldNames.to_lua_field_name(resource.module, f.name)
     "| `#{name}` | #{type_link(f.type, resource_lookup, type_lookup)} | #{notes} |"
+  end
+
+  # Fields the resource's authorizers may hide from results (field policies,
+  # etc.). Returned as a `MapSet` of field-name atoms for cheap membership
+  # checks while rendering field rows.
+  #
+  # `Ash.Resource.Info.protected_fields/1` reflects on each authorizer via
+  # `function_exported?/3`, which silently returns `[]` for an authorizer
+  # module that hasn't been loaded yet — so ensure they're loaded first.
+  defp protected_fields(%Manifest.Resource{module: module}) when is_atom(module) do
+    module
+    |> Ash.Resource.Info.authorizers()
+    |> Enum.each(&Code.ensure_loaded/1)
+
+    MapSet.new(Ash.Resource.Info.protected_fields(module))
+  rescue
+    _ -> MapSet.new()
   end
 
   defp kind_note(%Manifest.Field{kind: :calculation}), do: "computed"

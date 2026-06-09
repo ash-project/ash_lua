@@ -34,10 +34,21 @@ defmodule AshLua.Runtime do
     * `:actor`, `:tenant`, `:context` — host-supplied; merged into every Ash call.
     * `:manifest` — pre-built `%Ash.Info.Manifest{}` (skips regeneration).
     * `:lua` — pre-built `%Lua{}` to install bindings on. Defaults to `Lua.new/0`.
+    * `:forbidden_fields` — `:hide` (default) strips fields hidden by authorization;
+      `:display` renders them as the opaque marker `%{"opaque" => "forbidden"}`.
   """
   @spec build(keyword()) :: Lua.t()
   def build(opts) do
-    opts = Keyword.validate!(opts, [:otp_app, :actor, :tenant, :context, :manifest, :lua])
+    opts =
+      Keyword.validate!(opts, [
+        :otp_app,
+        :actor,
+        :tenant,
+        :context,
+        :manifest,
+        :lua,
+        forbidden_fields: :hide
+      ])
 
     manifest =
       case Keyword.fetch(opts, :manifest) do
@@ -56,6 +67,7 @@ defmodule AshLua.Runtime do
       actor: Keyword.get(opts, :actor),
       tenant: Keyword.get(opts, :tenant),
       context: Keyword.get(opts, :context, %{}),
+      forbidden_fields: forbidden_fields_opt(opts),
       print_output: []
     }
 
@@ -75,6 +87,26 @@ defmodule AshLua.Runtime do
     case Lua.get_private(lua, @private_key) do
       {:ok, %{print_output: lines}} when is_list(lines) -> lines
       _ -> []
+    end
+  end
+
+  defp forbidden_fields_opt(opts) do
+    case Keyword.get(opts, :forbidden_fields, :hide) do
+      mode when mode in [:hide, :display] ->
+        mode
+
+      other ->
+        raise ArgumentError,
+              ":forbidden_fields must be :hide or :display, got: #{inspect(other)}"
+    end
+  end
+
+  # Reads the configured forbidden-field rendering mode out of the VM's private
+  # state, falling back to `:hide` for VMs built without the option.
+  defp forbidden_fields_mode(state) do
+    case Lua.get_private(state, @private_key) do
+      {:ok, %{forbidden_fields: mode}} when mode in [:hide, :display] -> mode
+      _ -> :hide
     end
   end
 
@@ -640,7 +672,12 @@ defmodule AshLua.Runtime do
       {:ok, {select, load, template}} ->
         case dispatch(resource, action, input, ash_opts, select, load) do
           {:ok, result} ->
-            {encoded, state} = Lua.encode!(state, Encoder.encode_with_template(result, template))
+            {encoded, state} =
+              Lua.encode!(
+                state,
+                Encoder.encode_with_template(result, template, forbidden_fields_mode(state))
+              )
+
             {[encoded, nil], state}
 
           :ok ->
@@ -658,7 +695,9 @@ defmodule AshLua.Runtime do
   defp operation_call(resource, action, input, ash_opts, operation, state) do
     case run_read_operation(resource, action, input, ash_opts, operation) do
       {:ok, value} ->
-        {encoded, state} = Lua.encode!(state, Encoder.encode_result(value))
+        {encoded, state} =
+          Lua.encode!(state, Encoder.encode_result(value, forbidden_fields_mode(state)))
+
         {[encoded, nil], state}
 
       {:operation_error, reason} ->

@@ -23,17 +23,18 @@ defmodule AshLua.EvalActions.Run.Eval do
     resource = input.resource
 
     with {:ok, manifest} <- AshLua.Surface.for_eval_resource(resource) do
-      do_run(script, manifest, context)
+      do_run(script, manifest, AshLua.EvalActions.Info.forbidden_fields(resource), context)
     end
   end
 
-  defp do_run(script, manifest, context) do
+  defp do_run(script, manifest, forbidden_fields, context) do
     eval_opts =
       [
         manifest: manifest,
         actor: context.actor,
         tenant: context.tenant,
-        context: Map.get(context, :source_context, %{}) || %{}
+        context: Map.get(context, :source_context, %{}) || %{},
+        forbidden_fields: forbidden_fields
       ]
 
     try do

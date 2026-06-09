@@ -23,6 +23,13 @@ defmodule AshLua.EvalActions.Info do
     do: Extension.get_opt(resource, [:eval_actions], :docs_action_name, :docs)
 
   @doc """
+  How forbidden fields are rendered in `:eval` results — `:hide` (default) or `:display`.
+  """
+  @spec forbidden_fields(Ash.Resource.t() | Spark.Dsl.t()) :: :hide | :display
+  def forbidden_fields(resource),
+    do: Extension.get_opt(resource, [:eval_actions], :forbidden_fields, :hide)
+
+  @doc """
   OTP app to scan when building the manifest for `:eval` / `:docs`.
 
   Falls back to the resource's domain's `:otp_app` when not explicitly configured.

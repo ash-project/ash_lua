@@ -6,7 +6,6 @@ if Code.ensure_loaded?(Igniter) do
   defmodule Mix.Tasks.AshLua.Install do
     @moduledoc "Installs AshLua. Should be run with `mix igniter.install ash_lua`"
     @shortdoc @moduledoc
-    require Igniter.Code.Common
     use Igniter.Mix.Task
 
     @impl true

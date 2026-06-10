@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.1.6](https://github.com/ash-project/ash_lua/compare/v0.1.5...v0.1.6) (2026-06-10)
+
+
+
+
+### Bug Fixes:
+
+* fix formatter declarations by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.1.5](https://github.com/ash-project/ash_lua/compare/v0.1.4...v0.1.5) (2026-06-09)
 
 

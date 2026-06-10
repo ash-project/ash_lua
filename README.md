@@ -27,7 +27,7 @@ Add `ash_lua` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ash_lua, "~> 0.1.5"}
+    {:ash_lua, "~> 0.1.6"}
   ]
 end
 ```

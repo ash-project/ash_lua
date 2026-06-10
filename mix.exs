@@ -150,8 +150,8 @@ defmodule AshLua.MixProject do
         "docs",
         "spark.replace_doc_links"
       ],
-      "spark.formatter": "spark.formatter --extensions AshLua.Domain,AshLua.Resource",
-      "spark.cheat_sheets": "spark.cheat_sheets --extensions AshLua.Domain,AshLua.Resource"
+      "spark.formatter": "spark.formatter --extensions AshLua.Domain,AshLua.Resource,AshLua.EvalActions",
+      "spark.cheat_sheets": "spark.cheat_sheets --extensions AshLua.Domain,AshLua.Resource,AshLua.EvalActions"
     ]
   end
 end

@@ -6,9 +6,9 @@ SPDX-License-Identifier: MIT
 
 # Example use cases
 
-Two illustrations of why you might reach for AshLua. The first is something you
-can ship today; the second sketches what an `ash_ai`-driven MCP server might
-look like once it lands.
+Two illustrations of why you might reach for AshLua. The first is a
+user-configurable scripting surface; the second is an `ash_ai`-driven MCP
+server. Both ship today.
 
 ## 1. User-configurable scripts: a custom dashboard tile
 
@@ -121,7 +121,7 @@ For free, you get a UI/UX where users wire up real, authorized data into their
 own widgets without you building a query-builder UI for every combination of
 filter + sort + fields + aggregate.
 
-## 2. An AshLua-backed MCP server (upcoming, via ash_ai)
+## 2. An AshLua-backed MCP server (via ash_ai)
 
 [`ash_ai`](https://github.com/ash-project/ash_ai) already exposes Ash actions
 to LLMs over the [Model Context Protocol](https://modelcontextprotocol.io/),
@@ -134,48 +134,23 @@ them.
 The natural fit: hand the LLM the Lua surface AshLua already publishes, and
 let it write the composition itself.
 
-The shape of that server isn't shipped yet, but the pieces are all in place.
-A future `ash_ai` MCP server would advertise three tools:
+This ships today. The `AshLua.EvalActions` extension synthesizes two generic
+actions on a resource of yours, which you advertise through `ash_ai` as two
+MCP tools — one to read the API surface, one to execute composed Lua against
+it. See [Integrate with ash_ai](../how_to/integrate-with-ash-ai.md) for the
+full setup; the rest of this section sketches the resulting LLM workflow.
 
-```json
-{
-  "tools": [
-    {
-      "name": "ash_lua_list_callables",
-      "description": "List every operation (callable Lua function) exposed by this application's Ash domains.",
-      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
-    },
-    {
-      "name": "ash_lua_get_docs",
-      "description": "Fetch the markdown documentation for one operation (e.g. \"posts.post.create\") or one record/named type (e.g. \"posts.post\", \"Status\").",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "name": { "type": "string" } },
-        "required": ["name"],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "ash_lua_eval",
-      "description": "Evaluate a Lua script against the application's Ash domains. The script is run with the current user's actor / tenant / context.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "script": { "type": "string" } },
-        "required": ["script"],
-        "additionalProperties": false
-      }
-    }
-  ]
-}
-```
+The two tools an LLM ends up with:
 
-All three back directly onto the public AshLua API:
+| MCP tool        | Action                | Maps to                                                       |
+|-----------------|-----------------------|--------------------------------------------------------------|
+| `ash_lua_docs`  | `MCPActions.docs/1`   | `AshLua.Docs.full_doc/1`, `callable_doc/2`, `type_doc/2`, `search/2` |
+| `ash_lua_eval`  | `MCPActions.eval/1`   | `AshLua.eval!(script, otp_app: app, actor: ..., tenant: ...)` |
 
-| MCP tool                 | Maps to                                                          |
-|--------------------------|------------------------------------------------------------------|
-| `ash_lua_list_callables` | `AshLua.Docs.list_callables(otp_app: app)` + `list_types/1`      |
-| `ash_lua_get_docs`       | `AshLua.Docs.callable_doc/2` or `AshLua.Docs.type_doc/2`         |
-| `ash_lua_eval`           | `AshLua.eval!(script, otp_app: app, actor: ..., tenant: ...)`    |
+`ash_lua_docs` covers both discovery (no arguments → the full surface;
+`search: "..."` → ranked matches) and focus (`name: "..."` → one operation,
+type, or topic), so a single tool replaces the separate "list callables" and
+"get docs" probes.
 
 ### An example LLM workflow
 
@@ -185,16 +160,18 @@ average age of the oldest five?"_
 The model probes the surface, then writes the script:
 
 ```text
-LLM → ash_lua_list_callables()
-←   ["work.todo.read", "work.todo.create", ...]
+LLM → ash_lua_docs({ search = "overdue todo" })
+←   - `work.todo.read` (operation) — list todos with filtering
+    - `work.todo` (record type) — record type
+    ...
 
-LLM → ash_lua_get_docs("work.todo.read")
+LLM → ash_lua_docs({ name = "work.todo.read" })
 ←   # `work.todo.read` ... (the markdown ash_lua generates today)
 
-LLM → ash_lua_get_docs("work.todo")
+LLM → ash_lua_docs({ name = "work.todo" })
 ←   # Record type `work.todo` — fields include `priority`, `due_date`, `created_at`, ...
 
-LLM → ash_lua_eval(script = """
+LLM → ash_lua_eval({ script = """
   local overdue = assert(work.todo.read({
     filter    = { priority = "high", completed = false,
                   due_date = { less_than = today() } },
@@ -210,8 +187,8 @@ LLM → ash_lua_eval(script = """
   }))
 
   return overdue, sample
-""")
-←   { result = { 12, [<5 todo records>] }, err = nil }
+""" })
+←   { result = { 12, [<5 todo records>] }, error = nil }
 ```
 
 The model then takes the structured result and produces the answer. Crucially,

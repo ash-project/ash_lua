@@ -164,17 +164,21 @@ defmodule AshLua.Encoder do
     end
   end
 
-  # Luerl reference records — Lua functions / userdata / raw table refs that
+  # Lua VM reference records — Lua functions / userdata / raw table refs that
   # decoding leaves in place because there's no Elixir equivalent. They reach
   # us when a script returns a table containing methods (e.g. `return loop.item`)
   # or returns a function directly (e.g. `return print`). Render them as an
   # opaque marker so the consumer knows the slot is non-data, instead of
   # crashing Jason downstream.
+  def encode_result({:native_func, _}), do: %{"opaque" => "function"}
+  def encode_result({:lua_closure, _, _}), do: %{"opaque" => "function"}
+  def encode_result({:compiled_closure, _, _}), do: %{"opaque" => "function"}
   def encode_result({:funref, _, _}), do: %{"opaque" => "function"}
   def encode_result({:erl_func, _}), do: %{"opaque" => "function"}
   def encode_result({:erl_mfa, _, _, _}), do: %{"opaque" => "function"}
   def encode_result({:tref, _}), do: %{"opaque" => "table_reference"}
   def encode_result({:usdref, _}), do: %{"opaque" => "userdata"}
+  def encode_result({:udref, _}), do: %{"opaque" => "userdata"}
   # Luerl also returns the decoded shape `{module, function, arity_or_undefined}`
   # for built-in callables like `print` (module=:luerl_lib_basic).
   def encode_result({m, f, a})
@@ -209,6 +213,10 @@ defmodule AshLua.Encoder do
   # `:display` mode it surfaces as the opaque "forbidden" marker. Must precede
   # the generic `%_struct{}` clause so the struct's internals never leak.
   def encode_result(%Ash.ForbiddenField{}), do: forbidden_value(nil)
+  def encode_result(%Lua.VM.Display.NativeFunc{}), do: %{"opaque" => "function"}
+  def encode_result(%Lua.VM.Display.Closure{}), do: %{"opaque" => "function"}
+  def encode_result(%Lua.VM.Display.Userdata{}), do: %{"opaque" => "userdata"}
+  def encode_result(%Lua.VM.Display.Table{}), do: %{"opaque" => "table_reference"}
 
   def encode_result(%_struct{} = record) do
     record

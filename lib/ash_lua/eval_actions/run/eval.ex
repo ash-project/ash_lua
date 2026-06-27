@@ -71,28 +71,29 @@ defmodule AshLua.EvalActions.Run.Eval do
   # Detect that case and decode the original error table back out so the
   # action's `error` slot carries the same structured shape the script would
   # have seen on the unwrapped path.
-  defp extract_structured_error(%Lua.RuntimeException{original: original, state: state})
-       when not is_nil(state) do
-    original
-    |> raised_value()
-    |> case do
-      nil -> nil
-      value -> value |> safe_decode(state) |> normalize_error_table()
+  defp extract_structured_error(%Lua.RuntimeException{original: original, state: state}) do
+    case {raised_value(original), lua_state(original, state)} do
+      {nil, _state} -> nil
+      {_value, nil} -> nil
+      {value, lua_state} -> value |> safe_decode(lua_state) |> normalize_error_table()
     end
   end
 
   defp extract_structured_error(_), do: nil
 
-  # Pull the actual raised Lua value out of Luerl's error tagging. `assert(x,
-  # err)` raises `{:assert_error, err}`; `error(err)` raises `{:error_call,
-  # [err]}`. Anything else (`{:illegal_index, ...}`, etc.) isn't an
-  # ash_lua-shaped error and we let the default rescue formatter handle it.
+  # Pull the actual raised Lua value out of the VM error shape. Older Luerl
+  # paths raise `{:assert_error, err}` / `{:error_call, [err]}`; the native VM
+  # raises error structs with the Lua value in `:value`.
   defp raised_value({:assert_error, value}), do: value
   defp raised_value({:error_call, [value | _]}), do: value
+  defp raised_value(error) when is_struct(error), do: Map.get(error, :value)
   defp raised_value(_), do: nil
 
+  defp lua_state(original, nil) when is_struct(original), do: Map.get(original, :state)
+  defp lua_state(_original, state), do: state
+
   defp safe_decode(value, state) do
-    :luerl.decode(value, state)
+    Lua.decode!(%Lua{state: state}, value)
   rescue
     _ -> nil
   end

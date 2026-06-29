@@ -130,10 +130,14 @@ defmodule AshLua.Runtime do
     _ -> "<table>"
   end
 
+  defp format_print_arg(_state, {:native_func, _}), do: "<function>"
+  defp format_print_arg(_state, {:lua_closure, _, _}), do: "<function>"
+  defp format_print_arg(_state, {:compiled_closure, _, _}), do: "<function>"
   defp format_print_arg(_state, {:funref, _, _}), do: "<function>"
   defp format_print_arg(_state, {:erl_func, _}), do: "<function>"
   defp format_print_arg(_state, {:erl_mfa, _, _, _}), do: "<function>"
   defp format_print_arg(_state, {:usdref, _}), do: "<userdata>"
+  defp format_print_arg(_state, {:udref, _}), do: "<userdata>"
   defp format_print_arg(_state, value), do: inspect(value)
 
   defp append_print(state, line) do
@@ -225,12 +229,10 @@ defmodule AshLua.Runtime do
   end
 
   # Build a full error envelope (same shape as a real action failure) and
-  # hand it back as a Lua-side error. `Lua.set!/3`'s wrapper sees the
-  # `{:error, tref, lua}` return and calls `:luerl_lib.lua_error/2`, which
-  # throws inside the Lua VM. The outer `Lua.call_function/3` in
-  # `run_transaction/3` then catches that as `{:error, tref, state}`, and
-  # our message-channel stash carries the tref out to the transaction
-  # handler — which decodes it and surfaces the envelope as the
+  # hand it back as a Lua-side error. `Lua.set!/3` raises the encoded error
+  # inside the Lua VM; the outer `Lua.call_function/3` in `run_transaction/3`
+  # then catches it and our message-channel stash carries the value out to the
+  # transaction handler, which decodes it and surfaces the envelope as the
   # transaction's `err`.
   defp rollback_callback do
     fn args, state ->
@@ -449,12 +451,23 @@ defmodule AshLua.Runtime do
     encode_lua_transaction_error_body(state, value)
   end
 
-  # `:luerl_lib.lua_error/2` (used by our `utils.transaction.rollback`
-  # callback) raises with the encoded value directly, so the captured error
-  # reason is a bare `{:tref, _}` rather than one of the wrapped shapes
-  # above.
+  # `utils.transaction.rollback` raises with the encoded value directly, so
+  # the captured error reason can be a bare `{:tref, _}` rather than one of
+  # the wrapped shapes above.
   defp encode_lua_transaction_error(state, {:tref, _} = tref) do
     encode_lua_transaction_error_body(state, tref)
+  end
+
+  defp encode_lua_transaction_error(state, message) when is_binary(message) do
+    encode_lua_transaction_error_body(state, strip_lua_location(message))
+  end
+
+  defp encode_lua_transaction_error(state, error) when is_struct(error) do
+    case {Map.get(error, :value), Map.get(error, :state)} do
+      {nil, _state} -> encode_lua_transaction_error(state, :unknown)
+      {_value, nil} -> encode_lua_transaction_error(state, :unknown)
+      {value, lua_state} -> encode_lua_transaction_error_body(%Lua{state: lua_state}, value)
+    end
   end
 
   defp encode_lua_transaction_error(state, _other) do
@@ -476,12 +489,7 @@ defmodule AshLua.Runtime do
   end
 
   defp encode_lua_transaction_error_body(state, value) do
-    decoded =
-      try do
-        Lua.decode!(state, value)
-      rescue
-        _ -> nil
-      end
+    decoded = decode_lua_error_value(state, value)
 
     envelope =
       case decoded do
@@ -517,6 +525,20 @@ defmodule AshLua.Runtime do
         {encoded, st} = Lua.encode!(state, env)
         {[nil, encoded], st}
     end
+  end
+
+  defp decode_lua_error_value(state, {:tref, _} = value), do: decode_lua_ref(state, value)
+  defp decode_lua_error_value(state, {:udref, _} = value), do: decode_lua_ref(state, value)
+  defp decode_lua_error_value(_state, value), do: value
+
+  defp decode_lua_ref(state, value) do
+    Lua.decode!(state, value)
+  rescue
+    _ -> nil
+  end
+
+  defp strip_lua_location(message) do
+    String.replace(message, ~r/^.*?:\d+:\s*/s, "")
   end
 
   defp wrap_user_leaf(leaf) when is_map(leaf) do

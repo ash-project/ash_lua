@@ -9,7 +9,7 @@ defmodule AshLua.Test.Posts.ForbiddenDisplayMCPActions do
     extensions: [AshLua.EvalActions]
 
   eval_actions do
-    forbidden_fields(:display)
+    forbidden_fields :display
     resource AshLua.Test.Posts.SecretPost, actions: [:read]
   end
 end

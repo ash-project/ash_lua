@@ -115,7 +115,7 @@ defmodule AshLua.MixProject do
   defp deps do
     [
       {:ash, ash_version("~> 3.25 and >= 3.25.2")},
-      {:lua, "~> 0.3"},
+      {:lua, "~> 1.0.0-rc"},
       {:jason, "~> 1.2"},
       {:igniter, "~> 0.6", optional: true},
       {:spark, ">= 2.2.10"},
@@ -150,8 +150,10 @@ defmodule AshLua.MixProject do
         "docs",
         "spark.replace_doc_links"
       ],
-      "spark.formatter": "spark.formatter --extensions AshLua.Domain,AshLua.Resource,AshLua.EvalActions",
-      "spark.cheat_sheets": "spark.cheat_sheets --extensions AshLua.Domain,AshLua.Resource,AshLua.EvalActions"
+      "spark.formatter":
+        "spark.formatter --extensions AshLua.Domain,AshLua.Resource,AshLua.EvalActions",
+      "spark.cheat_sheets":
+        "spark.cheat_sheets --extensions AshLua.Domain,AshLua.Resource,AshLua.EvalActions"
     ]
   end
 end

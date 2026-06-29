@@ -9,8 +9,8 @@ defmodule AshLua.Test.Posts.CustomMCPActions do
     extensions: [AshLua.EvalActions]
 
   eval_actions do
-    eval_action_name(:run)
-    docs_action_name(:describe)
+    eval_action_name :run
+    docs_action_name :describe
 
     resource AshLua.Test.Posts.Post, actions: [:read]
   end

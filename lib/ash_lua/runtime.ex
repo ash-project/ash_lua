@@ -33,7 +33,8 @@ defmodule AshLua.Runtime do
     * `:otp_app` (required) — passed through to `Ash.Info.Manifest.generate/1`.
     * `:actor`, `:tenant`, `:context` — host-supplied; merged into every Ash call.
     * `:manifest` — pre-built `%Ash.Info.Manifest{}` (skips regeneration).
-    * `:lua` — pre-built `%Lua{}` to install bindings on. Defaults to `Lua.new/0`.
+    * `:lua` — pre-built `%Lua{}` to install bindings on. Defaults to `Lua.new/1`.
+    * `:lua_options` — options passed to `Lua.new/1` when `:lua` is not supplied.
     * `:forbidden_fields` — `:hide` (default) strips fields hidden by authorization;
       `:display` renders them as the opaque marker `%{"opaque" => "forbidden"}`.
   """
@@ -47,6 +48,7 @@ defmodule AshLua.Runtime do
         :context,
         :manifest,
         :lua,
+        :lua_options,
         forbidden_fields: :hide
       ])
 
@@ -61,7 +63,7 @@ defmodule AshLua.Runtime do
           m
       end
 
-    lua = Keyword.get(opts, :lua) || Lua.new()
+    lua = Keyword.get(opts, :lua) || Lua.new(Keyword.get(opts, :lua_options, []))
 
     private = %{
       actor: Keyword.get(opts, :actor),
@@ -158,7 +160,7 @@ defmodule AshLua.Runtime do
   """
   @spec eval!(String.t(), keyword()) :: {list(), Lua.t()}
   def eval!(script, opts) when is_binary(script) do
-    {script_opts, build_opts} = Keyword.split(opts, [:decode])
+    {script_opts, build_opts} = Keyword.split(opts, [:decode, :source])
     lua = build(build_opts)
     Lua.eval!(lua, script, script_opts)
   end
@@ -869,6 +871,7 @@ defmodule AshLua.Runtime do
     {sort, input} = Map.pop(input, "sort")
     {limit, input} = Map.pop(input, "limit")
     {offset, input} = Map.pop(input, "offset")
+    input = AshLua.FieldNames.to_internal_action_input(resource, action, input)
 
     query =
       resource
@@ -893,6 +896,8 @@ defmodule AshLua.Runtime do
   end
 
   defp dispatch(resource, %{type: :create} = action, input, opts, select, load) do
+    input = AshLua.FieldNames.to_internal_action_input(resource, action, input)
+
     resource
     |> Ash.Changeset.for_create(action.name, input, opts)
     |> changeset_select(select)
@@ -901,6 +906,7 @@ defmodule AshLua.Runtime do
   end
 
   defp dispatch(resource, %{type: :update} = action, input, opts, select, load) do
+    input = AshLua.FieldNames.to_internal_action_input(resource, action, input)
     {filter, input} = split_primary_key_filter(resource, input)
 
     bulk_extras =
@@ -915,6 +921,7 @@ defmodule AshLua.Runtime do
   end
 
   defp dispatch(resource, %{type: :destroy} = action, input, opts, select, load) do
+    input = AshLua.FieldNames.to_internal_action_input(resource, action, input)
     {filter, input} = split_primary_key_filter(resource, input)
 
     bulk_extras =
@@ -929,6 +936,8 @@ defmodule AshLua.Runtime do
   end
 
   defp dispatch(resource, %{type: :action} = action, input, opts, _select, _load) do
+    input = AshLua.FieldNames.to_internal_action_input(resource, action, input)
+
     resource
     |> Ash.ActionInput.for_action(action.name, input, opts)
     |> Ash.run_action(opts)

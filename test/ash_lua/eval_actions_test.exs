@@ -102,7 +102,10 @@ defmodule AshLua.EvalActionsTest do
         })
 
       assert {:ok, %{result: nil, error: err}} = Ash.run_action(input)
-      assert [%{"code" => "lua_error"} | _] = err["errors"]
+      assert [%{"code" => "lua_error", "vars" => vars} | _] = err["errors"]
+      refute String.contains?(err["message"], <<27>>)
+      assert is_integer(vars["line"])
+      assert is_map(vars["source_context"])
     end
 
     test "an assert(...) on a failed action surfaces the structured error, not 'object is a table'" do

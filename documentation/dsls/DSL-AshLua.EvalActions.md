@@ -11,26 +11,27 @@ defmodule MyApp.Agents.MCPActions do
   use Ash.Resource, extensions: [AshLua.EvalActions]
 
   eval_actions do
-    resource MyApp.Posts.Post, actions: [:read, :get_statistics]
-    resource MyApp.Posts.Comment, actions: [:read]
+    labels [:public]
   end
 end
 ```
 
-The synthesized actions inherit the caller's actor / tenant / context — both
+The synthesized actions inherit the caller's actor / tenant / context. Both
 the script body and the documentation rendering are constrained to the
-configured `(resource, action)` pairs, and every Ash call inside the Lua
-script flows through the standard authorization machinery.
+configured action labels, and every Ash call inside the Lua script flows
+through the standard authorization machinery.
 
 
 ## eval_actions
 Configures the Lua surface exposed to the synthesized `:eval` and `:docs` actions.
 
-Each `resource` entry pairs a resource module with the set of action names
-that the script (and the generated docs) is allowed to see. Use this to
-apply principle-of-least-privilege per agent surface — only the listed
-actions become callable from Lua and only those entrypoints appear in
-`:docs` output.
+Prefer `labels` to expose mapped Lua actions declared on the domain with
+`lua do namespace ... action ..., labels: [...] end`. This keeps the eval
+surface tied to the same public Lua surface used everywhere else.
+
+The legacy `resource` entries remain supported for derived surfaces and
+fine-grained compatibility. When both `labels` and `resource` entries are
+configured, the resource/action list narrows the labelled action surface.
 
 
 ### Nested DSLs
@@ -40,8 +41,15 @@ actions become callable from Lua and only those entrypoints appear in
 ### Examples
 ```
 eval_actions do
-  resource MyApp.Posts.Post, actions: [:read, :get_statistics]
-  resource MyApp.Posts.Comment, actions: [:read]
+  labels [:public]
+end
+
+```
+
+```
+eval_actions do
+  labels [:public]
+  resource MyApp.Posts.Post, actions: [:read]
 end
 
 ```
@@ -53,6 +61,7 @@ end
 
 | Name | Type | Default | Docs |
 |------|------|---------|------|
+| [`labels`](#eval_actions-labels){: #eval_actions-labels } | `list(atom)` | `[]` | Mapped action labels to expose to the eval/docs actions. An action is included only when it has all requested labels. |
 | [`eval_action_name`](#eval_actions-eval_action_name){: #eval_actions-eval_action_name } | `atom` | `:eval` | Name of the synthesized eval action. Defaults to `:eval`. |
 | [`docs_action_name`](#eval_actions-docs_action_name){: #eval_actions-docs_action_name } | `atom` | `:docs` | Name of the synthesized docs action. Defaults to `:docs`. |
 | [`otp_app`](#eval_actions-otp_app){: #eval_actions-otp_app } | `atom` |  | OTP app to scan when building the manifest. Defaults to the agent resource's domain's `:otp_app`. |

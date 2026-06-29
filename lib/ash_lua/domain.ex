@@ -11,7 +11,7 @@ defmodule AshLua.Domain do
     examples: [
       """
       namespace "pages" do
-        action :list, MyApp.StorefrontPage, :list_for_storefront
+        action :list, MyApp.StorefrontPage, :list_for_storefront, labels: [:public, :read_model]
       end
       """
     ],
@@ -30,6 +30,12 @@ defmodule AshLua.Domain do
         type: :atom,
         required: true,
         doc: "The internal Ash action to call."
+      ],
+      labels: [
+        type: {:list, :atom},
+        default: [],
+        doc:
+          "Labels that describe this mapped Lua action. `AshLua.EvalActions` can use these labels to expose individual actions."
       ]
     ]
   }
@@ -37,7 +43,8 @@ defmodule AshLua.Domain do
   @namespace %Spark.Dsl.Entity{
     name: :namespace,
     target: AshLua.Domain.Namespace,
-    args: [:name],
+    transform: {__MODULE__, :normalize_namespace_labels, []},
+    args: [:name, {:optional, :labels, []}],
     describe: "Defines a public Lua namespace for actions.",
     examples: [
       """
@@ -47,7 +54,7 @@ defmodule AshLua.Domain do
       """,
       """
       namespace "storefronts.pages" do
-        action :list, MyApp.StorefrontPage, :list_for_storefront
+        action :list, MyApp.StorefrontPage, :list_for_storefront, labels: [:public, :read_model]
       end
       """
     ],
@@ -57,6 +64,17 @@ defmodule AshLua.Domain do
         required: true,
         doc:
           "The public Lua namespace. Dotted strings are split into nested Lua tables, so \"storefronts.pages\" exposes `storefronts.pages.*`."
+      ],
+      labels: [
+        type:
+          {:or,
+           [
+             {:list, :atom},
+             {:keyword_list, [labels: [type: {:list, :atom}, required: true]]}
+           ]},
+        default: [],
+        doc:
+          "Labels inherited by every mapped action in this namespace. Prefer action-level labels when individual actions need different eval surfaces."
       ]
     ],
     entities: [
@@ -93,4 +111,11 @@ defmodule AshLua.Domain do
   use Spark.Dsl.Extension,
     sections: [@lua],
     verifiers: [AshLua.Domain.Verifiers.VerifySurface]
+
+  @doc false
+  def normalize_namespace_labels(%AshLua.Domain.Namespace{labels: [labels: labels]} = namespace) do
+    {:ok, %{namespace | labels: labels}}
+  end
+
+  def normalize_namespace_labels(%AshLua.Domain.Namespace{} = namespace), do: {:ok, namespace}
 end

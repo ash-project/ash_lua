@@ -20,18 +20,39 @@ and tenant attached.
 
 ## The shape
 
-Define one resource per "agent surface" you want to expose:
+Declare the public Lua namespaces on your Ash domains, then define one
+resource per "agent surface" you want to expose:
 
 ```elixir
+defmodule MyApp.Content do
+  use Ash.Domain,
+    otp_app: :my_app,
+    extensions: [AshLua.Domain]
+
+  lua do
+    namespace "posts" do
+      action :list, MyApp.Posts.Post, :read, labels: [:public, :read_model]
+      action :stats, MyApp.Posts.Post, :get_statistics, labels: [:public, :read_model]
+    end
+
+    namespace "comments" do
+      action :list, MyApp.Posts.Comment, :read, labels: [:public, :read_model]
+    end
+
+    namespace "accounts" do
+      action :create_user, MyApp.Accounts.User, :create, labels: [:public, :writes]
+      action :list_users, MyApp.Accounts.User, :read, labels: [:public]
+    end
+  end
+end
+
 defmodule MyApp.Agents.MCPActions do
   use Ash.Resource,
     domain: MyApp.Agents,
     extensions: [AshLua.EvalActions]
 
   eval_actions do
-    resource MyApp.Posts.Post, actions: [:read, :get_statistics]
-    resource MyApp.Posts.Comment, actions: [:read]
-    resource MyApp.Accounts.User, actions: [:read, :create]
+    labels [:public]
   end
 end
 ```
@@ -40,14 +61,16 @@ That's the whole declaration. The extension synthesizes two generic actions on
 `MCPActions`:
 
   * **`:eval`** — takes a Lua `script` and runs it through `AshLua.eval!/2`,
-    scoped to *only* the listed `(resource, action)` pairs. Returns
+    scoped to *only* mapped actions matching the configured labels. Returns
     `%{result, error}` (mirroring the in-script `(result, err)` convention).
   * **`:docs`** — returns markdown documentation for the same scoped surface,
     in one of three modes:
-      * no arguments → the full rendered page (`AshLua.Docs.full_doc/1`);
+      * no arguments → the compact index (`AshLua.Docs.index_doc/1`);
       * `name: "..."` → the focused page for that callable, type, or topic;
       * `search: "..."` → a ranked list of matching ids, intended as a
         discovery aid (then follow up with the same action using `name`).
+        Use `name: "full"` to request the full rendered page
+        (`AshLua.Docs.full_doc/1`).
 
     `name` and `search` are mutually exclusive.
 
@@ -65,7 +88,7 @@ eval_actions do
   eval_action_name :run_lua
   docs_action_name :describe_lua
 
-  resource MyApp.Posts.Post, actions: [:read]
+  labels [:public, :read_model]
 end
 ```
 
@@ -87,14 +110,22 @@ actions to advertise as MCP tools.
 
 ## Scoping the surface
 
-`eval_actions` is the source of truth for which operations the script (and
-generated docs) can see. The script can only call `<domain>.<resource>.<action>`
-paths that correspond to a listed `(resource, action)` pair; everything else
-is invisible (no entry in the docs, no callable in the Lua environment).
+Domain namespaces are the source of truth for the public Lua surface.
+`eval_actions` selects which mapped actions the script and generated docs can
+see. The script can only call public paths from actions whose labels match the
+configured `labels`; everything else is invisible (no entry in the docs, no
+callable in the Lua environment).
+
+When multiple labels are listed, a mapped action must have all of them to be
+included. A namespace can also declare `labels: [...]`; those labels are
+inherited by every action inside it, but action-level labels are what give you
+individual resolution. The legacy `resource ..., actions: ...` selector still
+works for derived surfaces and can be combined with labels to narrow a labelled
+surface by underlying Ash action.
 
 This is the natural place to apply "principle of least privilege" — expose
-only the actions that are safe and useful for the agent you're building, and
-omit anything destructive or expensive. You can run multiple agent resources
+only actions that are safe and useful for the agent you're building, and omit
+anything destructive or expensive. You can run multiple agent resources
 side-by-side, each with its own scope:
 
 ```elixir
@@ -104,8 +135,7 @@ defmodule MyApp.Agents.ReadOnlyMCP do
     extensions: [AshLua.EvalActions]
 
   eval_actions do
-    resource MyApp.Posts.Post, actions: [:read]
-    resource MyApp.Posts.Comment, actions: [:read]
+    labels [:read_model]
   end
 end
 
@@ -115,8 +145,7 @@ defmodule MyApp.Agents.SupportMCP do
     extensions: [AshLua.EvalActions]
 
   eval_actions do
-    resource MyApp.Support.Ticket, actions: [:read, :create, :reassign]
-    resource MyApp.Accounts.User, actions: [:read]
+    labels [:support_agent]
   end
 end
 ```
@@ -157,6 +186,24 @@ The LLM sees the two MCP tool names you declared (`ash_lua_docs`,
 configured for the MCP session — `ash_ai` threads those through into the
 generic action's context, and from there into every Ash call the Lua script
 performs.
+
+## Optional: preload eval manifests
+
+By default, the scoped eval manifest is built lazily when an `:eval` or `:docs`
+action runs. For applications that need quicker first-invocation times in
+production, preload every eval manifest during application boot:
+
+```elixir
+AshLua.preload_eval_manifests!(:my_app)
+```
+
+This stores the immutable scoped manifests in `:persistent_term`. Runtime eval
+calls still build a fresh Lua VM and still receive the current actor, tenant,
+and context; only the reusable surface specification is cached. Once preloaded,
+checking the cache is a microsecond-level persistent-term read.
+
+In development or test, lazy generation is usually simpler because code reloads
+and changing DSL configuration require clearing or rebuilding the cache.
 
 ## A walkthrough
 
@@ -229,9 +276,10 @@ for details.
 
 `:docs` operates in three modes depending on its arguments:
 
-  * **No arguments** — returns the full markdown page from
-    `AshLua.Docs.full_doc/1`, restricted to the scoped surface.
+  * **No arguments** — returns a compact index from `AshLua.Docs.index_doc/1`,
+    restricted to the scoped surface.
   * **`name: "..."`** — returns a single focused page:
+      * `"full"` → the full markdown page from `AshLua.Docs.full_doc/1`;
       * a callable path like `"work.todo.read"` → the per-operation page from
         `AshLua.Docs.callable_doc/2`;
       * a record-type path like `"work.todo"` or a named type like `"Status"`

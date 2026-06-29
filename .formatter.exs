@@ -12,9 +12,11 @@ spark_locals_without_parens = [
   expose?: 1,
   field_names: 1,
   forbidden_fields: 1,
+  labels: 1,
   name: 1,
   namespace: 1,
   namespace: 2,
+  namespace: 3,
   otp_app: 1,
   resource: 1,
   resource: 2

@@ -9,6 +9,6 @@ defmodule AshLua.Test.Surface.MCPActions do
     extensions: [AshLua.EvalActions]
 
   eval_actions do
-    resource AshLua.Test.Surface.Page, actions: [:list_for_storefront, :rename, :summarize]
+    labels [:public]
   end
 end

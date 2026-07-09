@@ -8,6 +8,10 @@ defmodule AshLua.EvalActionsTest do
   alias AshLua.Test.Posts.MCPActions
   alias AshLua.Test.Posts.Post
 
+  defp eval_manifest_cache do
+    :persistent_term.get({AshLua.Surface, :eval_manifest_cache}, %{})
+  end
+
   describe "synthesized :eval action" do
     test "runs a Lua script against the scoped Lua surface" do
       {:ok, _} = Ash.create(Post, %{title: "Hello"}, action: :create)
@@ -21,6 +25,19 @@ defmodule AshLua.EvalActionsTest do
         })
 
       assert {:ok, %{result: "Hello", error: nil}} = Ash.run_action(input)
+    end
+
+    test "caches the scoped manifest by default" do
+      AshLua.Surface.clear_eval_manifest_cache!()
+
+      try do
+        input = Ash.ActionInput.for_action(MCPActions, :eval, %{script: "return 42"})
+
+        assert {:ok, %{result: 42, error: nil}} = Ash.run_action(input)
+        assert Map.has_key?(eval_manifest_cache(), MCPActions)
+      after
+        AshLua.Surface.clear_eval_manifest_cache!()
+      end
     end
 
     test "captures a Lua-side (nil, err) into the structured response" do

@@ -189,9 +189,10 @@ performs.
 
 ## Optional: preload eval manifests
 
-By default, the scoped eval manifest is built lazily when an `:eval` or `:docs`
-action runs. For applications that need quicker first-invocation times in
-production, preload every eval manifest during application boot:
+By default, the generated `:eval` and `:docs` actions build and cache their
+scoped eval manifest lazily on first use. For applications that need quicker
+first-invocation times in production, preload every eval manifest during
+application boot:
 
 ```elixir
 AshLua.preload_eval_manifests!(:my_app)
@@ -199,11 +200,12 @@ AshLua.preload_eval_manifests!(:my_app)
 
 This stores the immutable scoped manifests in `:persistent_term`. Runtime eval
 calls still build a fresh Lua VM and still receive the current actor, tenant,
-and context; only the reusable surface specification is cached. Once preloaded,
-checking the cache is a microsecond-level persistent-term read.
+and context; only the reusable surface specification is cached.
 
-In development or test, lazy generation is usually simpler because code reloads
-and changing DSL configuration require clearing or rebuilding the cache.
+Direct runtime calls outside the generated actions can opt into the same cache
+with `cache?: true`. In development or test, lazy generation is usually simpler
+because code reloads and changing DSL configuration require clearing or
+rebuilding the cache.
 
 ## A walkthrough
 

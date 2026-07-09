@@ -10,6 +10,10 @@ defmodule AshLua.SurfaceTest do
 
   defp opts, do: [otp_app: :ash_lua]
 
+  defp eval_manifest_cache do
+    :persistent_term.get({AshLua.Surface, :eval_manifest_cache}, %{})
+  end
+
   test "surface metadata is stored on manifest entrypoints" do
     assert {:ok, %Ash.Info.Manifest{} = manifest} = AshLua.Surface.for_otp_app(:ash_lua)
     assert {:ok, entrypoint} = AshLua.Surface.find_entrypoint(manifest, "surface.page_list")
@@ -204,7 +208,21 @@ defmodule AshLua.SurfaceTest do
     assert AshLua.Docs.list_callables(manifest) == ["surface.page_list"]
   end
 
-  test "preload_eval_manifests! caches eval resource manifests for an otp app" do
+  test "for_eval_resource caches manifests only when requested" do
+    AshLua.Surface.clear_eval_manifest_cache!()
+
+    try do
+      assert {:ok, _manifest} = AshLua.Surface.for_eval_resource(MCPActions)
+      refute Map.has_key?(eval_manifest_cache(), MCPActions)
+
+      assert {:ok, _manifest} = AshLua.Surface.for_eval_resource(MCPActions, cache?: true)
+      assert Map.has_key?(eval_manifest_cache(), MCPActions)
+    after
+      AshLua.Surface.clear_eval_manifest_cache!()
+    end
+  end
+
+  test "preload_eval_manifests! warms eval resource manifests for cache opt-in" do
     AshLua.Surface.clear_eval_manifest_cache!()
 
     try do
@@ -213,7 +231,7 @@ defmodule AshLua.SurfaceTest do
       assert MCPActions in resources
       assert AshLua.Test.Posts.MCPActions in resources
 
-      assert {:ok, manifest} = AshLua.Surface.for_eval_resource(MCPActions)
+      assert {:ok, manifest} = AshLua.Surface.for_eval_resource(MCPActions, cache?: true)
       assert "surface.page_list" in AshLua.Docs.list_callables(manifest)
       refute "surface.admin.page_rename" in AshLua.Docs.list_callables(manifest)
     after

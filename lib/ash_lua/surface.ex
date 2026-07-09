@@ -15,7 +15,6 @@ defmodule AshLua.Surface do
 
   @config_key :ash_lua
   @eval_manifest_cache_key {__MODULE__, :eval_manifest_cache}
-  @eval_manifest_cache_enabled_key {__MODULE__, :eval_manifest_cache_enabled}
   @cache_miss {:ash_lua, :eval_manifest_cache_miss}
 
   @type surface_config :: %{
@@ -41,9 +40,9 @@ defmodule AshLua.Surface do
   end
 
   @doc "Generates the scoped Lua manifest for an `AshLua.EvalActions` resource."
-  @spec for_eval_resource(module()) :: {:ok, Manifest.t()}
-  def for_eval_resource(resource) do
-    if eval_manifest_cache_enabled?() do
+  @spec for_eval_resource(module(), keyword()) :: {:ok, Manifest.t()}
+  def for_eval_resource(resource, opts \\ []) do
+    if Keyword.get(opts, :cache?, false) do
       case cached_eval_manifest(resource) do
         {:ok, %Manifest{} = manifest} -> {:ok, manifest}
         :error -> cache_eval_manifest(resource)
@@ -59,6 +58,8 @@ defmodule AshLua.Surface do
 
   The cache stores only immutable manifest data. Each eval invocation still
   builds a fresh Lua VM with its caller-specific actor, tenant, and context.
+  Generated `AshLua.EvalActions` use this cache by default; direct runtime
+  calls can opt in with `cache?: true`.
   """
   @spec preload_eval_manifests!(atom()) :: [module()]
   def preload_eval_manifests!(otp_app) when is_atom(otp_app) do
@@ -75,7 +76,6 @@ defmodule AshLua.Surface do
       |> Map.merge(Map.new(entries))
 
     :persistent_term.put(@eval_manifest_cache_key, cache)
-    :persistent_term.put(@eval_manifest_cache_enabled_key, true)
 
     resources
   end
@@ -84,7 +84,6 @@ defmodule AshLua.Surface do
   @spec clear_eval_manifest_cache!() :: :ok
   def clear_eval_manifest_cache! do
     :persistent_term.erase(@eval_manifest_cache_key)
-    :persistent_term.put(@eval_manifest_cache_enabled_key, false)
     :ok
   end
 
@@ -117,10 +116,6 @@ defmodule AshLua.Surface do
     |> Enum.filter(&(AshLua.EvalActions in Ash.Resource.Info.extensions(&1)))
   end
 
-  defp eval_manifest_cache_enabled? do
-    :persistent_term.get(@eval_manifest_cache_enabled_key, false)
-  end
-
   defp cached_eval_manifest(resource) do
     case :persistent_term.get(@eval_manifest_cache_key, @cache_miss) do
       @cache_miss ->
@@ -142,7 +137,6 @@ defmodule AshLua.Surface do
         |> Map.put(resource, manifest)
 
       :persistent_term.put(@eval_manifest_cache_key, cache)
-      :persistent_term.put(@eval_manifest_cache_enabled_key, true)
 
       {:ok, manifest}
     end

@@ -8,6 +8,10 @@ defmodule AshLua.EvalTest do
   alias AshLua.Test.Surface.MCPActions
   alias AshLua.Test.Surface.Page
 
+  defp eval_manifest_cache do
+    :persistent_term.get({AshLua.Surface, :eval_manifest_cache}, %{})
+  end
+
   test "manifest/1 resolves eval resource scopes" do
     assert {:ok, manifest} = AshLua.Eval.manifest(eval_resource: MCPActions)
 
@@ -15,6 +19,20 @@ defmodule AshLua.EvalTest do
 
     assert "surface.page_list" in callables
     refute "surface.admin.page_rename" in callables
+  end
+
+  test "manifest/1 caches eval resource scopes when requested" do
+    AshLua.Surface.clear_eval_manifest_cache!()
+
+    try do
+      assert {:ok, _manifest} = AshLua.Eval.manifest(eval_resource: MCPActions)
+      refute Map.has_key?(eval_manifest_cache(), MCPActions)
+
+      assert {:ok, _manifest} = AshLua.Eval.manifest(eval_resource: MCPActions, cache?: true)
+      assert Map.has_key?(eval_manifest_cache(), MCPActions)
+    after
+      AshLua.Surface.clear_eval_manifest_cache!()
+    end
   end
 
   test "manifest/1 resolves otp app label scopes" do

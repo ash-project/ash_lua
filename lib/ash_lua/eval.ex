@@ -28,7 +28,8 @@ defmodule AshLua.Eval do
           eval_resource: module(),
           otp_app: atom(),
           labels: [atom()],
-          action_entrypoints: [{module(), atom()}]
+          action_entrypoints: [{module(), atom()}],
+          cache?: boolean()
         ]
 
   @type run_opts :: [
@@ -44,6 +45,7 @@ defmodule AshLua.Eval do
           | {:otp_app, atom()}
           | {:labels, [atom()]}
           | {:action_entrypoints, [{module(), atom()}]}
+          | {:cache?, boolean()}
         ]
 
   @doc """
@@ -57,6 +59,8 @@ defmodule AshLua.Eval do
       resource's scope.
     * `otp_app: :my_app` plus optional `labels:` / `action_entrypoints:` —
       build a scoped surface directly from domain DSL metadata.
+    * `cache?: true` with `eval_resource:` — cache and reuse the scoped manifest
+      in `:persistent_term`.
   """
   @spec manifest(Manifest.t() | manifest_opts()) :: {:ok, Manifest.t()} | {:error, term()}
   def manifest(%Manifest{} = manifest), do: {:ok, AshLua.Surface.for_manifest(manifest)}
@@ -76,7 +80,7 @@ defmodule AshLua.Eval do
         end
 
       resource = Keyword.get(opts, :eval_resource) ->
-        AshLua.Surface.for_eval_resource(resource)
+        AshLua.Surface.for_eval_resource(resource, Keyword.take(opts, [:cache?]))
 
       otp_app = Keyword.get(opts, :otp_app) ->
         AshLua.Surface.for_otp_app(otp_app,

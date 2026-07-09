@@ -26,7 +26,7 @@ defmodule AshLua.EvalActions.Run.Docs do
   @impl true
   def run(input, _opts, _context) do
     AshLua.Eval.docs(
-      [eval_resource: input.resource],
+      [eval_resource: input.resource, cache?: true],
       name: Map.get(input.arguments, :name),
       search: Map.get(input.arguments, :search)
     )

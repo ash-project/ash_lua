@@ -116,7 +116,7 @@ prebuilt `:lua` VM. Prefer manifest caching over VM caching: the manifest is
 immutable surface data, while the VM carries request-specific actor, tenant,
 context, private state, and captured output.
 
-## Preload in production
+## Cache or preload in production
 
 If you use `AshLua.EvalActions` resources to define scopes, preload their
 manifests during application boot:
@@ -125,6 +125,11 @@ manifests during application boot:
 AshLua.preload_eval_manifests!(:my_app)
 ```
 
-After preload, `AshLua.Eval.manifest(eval_resource: MyApp.AgentSurface)` and
-the generated actions use the cached manifest. Each script invocation still
-gets a fresh Lua VM.
+The generated actions use the persistent cache by default, whether the manifest
+was preloaded or first built lazily. Direct runtime calls stay opt-in:
+
+```elixir
+manifest = AshLua.Eval.manifest!(eval_resource: MyApp.AgentSurface, cache?: true)
+```
+
+Each script invocation still gets a fresh Lua VM.

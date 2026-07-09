@@ -82,10 +82,13 @@ defmodule AshLua do
   @doc """
   Preloads cached eval manifests for every `AshLua.EvalActions` resource in an OTP app.
 
-  This is an optional production boot-time optimization for applications that
-  want to avoid rebuilding the scoped manifest on the first eval/docs call.
-  Each invocation still gets a fresh Lua VM with its own actor, tenant, and
-  context.
+  Generated eval/docs actions cache their scoped manifest on first use by
+  default. This is an optional production boot-time optimization for
+  applications that want to avoid rebuilding the scoped manifest on the first
+  eval/docs call. Direct runtime calls can opt into the same cache with
+  `cache?: true`.
+
+  Each invocation still gets a fresh Lua VM with its own actor, tenant, and context.
   """
   @spec preload_eval_manifests!(atom()) :: [module()]
   def preload_eval_manifests!(otp_app) when is_atom(otp_app) do

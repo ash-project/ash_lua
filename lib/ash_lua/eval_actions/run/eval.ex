@@ -26,6 +26,7 @@ defmodule AshLua.EvalActions.Run.Eval do
     if is_binary(script) do
       AshLua.Eval.run(script,
         eval_resource: resource,
+        cache?: true,
         actor: context.actor,
         tenant: context.tenant,
         context: if(is_map(source_context), do: source_context, else: %{}),

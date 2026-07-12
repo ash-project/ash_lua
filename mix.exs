@@ -65,6 +65,7 @@ defmodule AshLua.MixProject do
         {"README.md", title: "Home"},
         "documentation/tutorials/getting-started-with-ash-lua.md",
         "documentation/topics/example-use-cases.md",
+        "documentation/how_to/use-ash-lua-as-a-runtime.md",
         "documentation/how_to/integrate-with-ash-ai.md",
         "CHANGELOG.md"
       ],
@@ -79,7 +80,8 @@ defmodule AshLua.MixProject do
       ],
       groups_for_modules: [
         AshLua: [
-          AshLua
+          AshLua,
+          AshLua.Eval
         ]
       ]
     ]

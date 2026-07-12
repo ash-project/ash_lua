@@ -11,8 +11,9 @@ defmodule AshLua.Domain.Action do
           name: atom(),
           resource: module(),
           action: atom(),
+          labels: [atom()],
           __spark_metadata__: term()
         }
 
-  defstruct [:name, :resource, :action, __spark_metadata__: nil]
+  defstruct [:name, :resource, :action, labels: [], __spark_metadata__: nil]
 end

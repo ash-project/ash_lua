@@ -9,9 +9,10 @@ defmodule AshLua.Domain.Namespace do
 
   @type t :: %__MODULE__{
           name: String.t() | [String.t()],
+          labels: [atom()],
           actions: [AshLua.Domain.Action.t()],
           __spark_metadata__: term()
         }
 
-  defstruct [:name, actions: [], __spark_metadata__: nil]
+  defstruct [:name, labels: [], actions: [], __spark_metadata__: nil]
 end

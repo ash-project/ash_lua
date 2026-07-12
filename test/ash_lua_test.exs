@@ -72,6 +72,24 @@ defmodule AshLuaTest do
         )
       end
     end
+
+    test "forwards source names into Lua runtime errors" do
+      error =
+        assert_raise Lua.RuntimeException, fn ->
+          AshLua.eval!(
+            """
+            local f = nil
+            return f()
+            """,
+            otp_app: :ash_lua,
+            source: "agent_script.lua"
+          )
+        end
+
+      assert error.source == "agent_script.lua"
+      assert error.line == 2
+      assert Exception.message(error) =~ "agent_script.lua:2"
+    end
   end
 
   describe "read / update / destroy / generic action" do

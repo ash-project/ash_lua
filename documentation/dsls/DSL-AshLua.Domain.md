@@ -36,7 +36,7 @@ end
 
 ### lua.namespace
 ```elixir
-namespace name
+namespace name, labels \\ []
 ```
 
 
@@ -56,7 +56,7 @@ end
 
 ```
 namespace "storefronts.pages" do
-  action :list, MyApp.StorefrontPage, :list_for_storefront
+  action :list, MyApp.StorefrontPage, :list_for_storefront, labels: [:public, :read_model]
 end
 
 ```
@@ -68,6 +68,7 @@ end
 | Name | Type | Default | Docs |
 |------|------|---------|------|
 | [`name`](#lua-namespace-name){: #lua-namespace-name .spark-required} | `String.t \| list(String.t)` |  | The public Lua namespace. Dotted strings are split into nested Lua tables, so "storefronts.pages" exposes `storefronts.pages.*`. |
+| [`labels`](#lua-namespace-labels){: #lua-namespace-labels } | `list(atom) \| [labels: list(atom)]` | `[]` | Labels inherited by every mapped action in this namespace. Prefer action-level labels when individual actions need different eval surfaces. |
 
 
 
@@ -84,7 +85,7 @@ Expose an Ash action at a public Lua function name inside a namespace.
 ### Examples
 ```
 namespace "pages" do
-  action :list, MyApp.StorefrontPage, :list_for_storefront
+  action :list, MyApp.StorefrontPage, :list_for_storefront, labels: [:public, :read_model]
 end
 
 ```
@@ -98,7 +99,11 @@ end
 | [`name`](#lua-namespace-action-name){: #lua-namespace-action-name .spark-required} | `atom` |  | The Lua function name inside the namespace. |
 | [`resource`](#lua-namespace-action-resource){: #lua-namespace-action-resource .spark-required} | `module` |  | The Ash resource that owns the action. |
 | [`action`](#lua-namespace-action-action){: #lua-namespace-action-action .spark-required} | `atom` |  | The internal Ash action to call. |
+### Options
 
+| Name | Type | Default | Docs |
+|------|------|---------|------|
+| [`labels`](#lua-namespace-action-labels){: #lua-namespace-action-labels } | `list(atom)` | `[]` | Labels that describe this mapped Lua action. `AshLua.EvalActions` can use these labels to expose individual actions. |
 
 
 

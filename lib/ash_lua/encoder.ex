@@ -4,8 +4,8 @@
 
 defmodule AshLua.Encoder do
   @moduledoc """
-  Conversions between Elixir/Ash values and the plain shapes that `:luerl` (via the `:lua` package)
-  can encode as Lua tables.
+  Conversions between Elixir/Ash values and the plain shapes that the Lua VM can encode as Lua
+  tables.
 
   Lua doesn't have atoms or sigils — atoms are rendered as strings, `Decimal`/`Date`/`DateTime`/
   `NaiveDateTime`/`Time` as their canonical string forms, and structs as plain attribute maps
@@ -28,7 +28,7 @@ defmodule AshLua.Encoder do
   @doc """
   Decodes a Lua-side input value into the shape Ash actions expect for `params`/arguments.
 
-  Luerl decodes Lua tables as a list of two-tuples — keyed by integers for sequences and by
+  Lua tables decode as a list of two-tuples — keyed by integers for sequences and by
   strings for maps. We normalize:
 
     * integer-keyed (sequence) tables → plain lists, sorted by index
@@ -144,7 +144,7 @@ defmodule AshLua.Encoder do
     }
   end
 
-  # Luerl decodes Lua tables as keyword-list-of-2-tuples — integer-keyed for
+  # Lua tables decode as keyword-list-of-2-tuples — integer-keyed for
   # sequences, string-keyed for maps. Flatten the same way `decode_input/1`
   # does on the input side, so a script's returned table comes through as a
   # plain list or map instead of a verbose nested `{type:"tuple", values:[...]}`
@@ -177,10 +177,10 @@ defmodule AshLua.Encoder do
   def encode_result({:erl_func, _}), do: %{"opaque" => "function"}
   def encode_result({:erl_mfa, _, _, _}), do: %{"opaque" => "function"}
   def encode_result({:tref, _}), do: %{"opaque" => "table_reference"}
-  def encode_result({:usdref, _}), do: %{"opaque" => "userdata"}
   def encode_result({:udref, _}), do: %{"opaque" => "userdata"}
-  # Luerl also returns the decoded shape `{module, function, arity_or_undefined}`
-  # for built-in callables like `print` (module=:luerl_lib_basic).
+  def encode_result({:usdref, _}), do: %{"opaque" => "userdata"}
+  # The Lua VM can also return the decoded shape `{module, function, arity_or_undefined}`
+  # for built-in callables.
   def encode_result({m, f, a})
       when is_atom(m) and is_atom(f) and (is_integer(a) or is_atom(a)),
       do: %{"opaque" => "function"}
@@ -209,14 +209,15 @@ defmodule AshLua.Encoder do
     %{"type" => Atom.to_string(member), "value" => encode_result(inner)}
   end
 
-  # A field hidden by authorization. In `:hide` mode it's dropped (nil); in
-  # `:display` mode it surfaces as the opaque "forbidden" marker. Must precede
-  # the generic `%_struct{}` clause so the struct's internals never leak.
-  def encode_result(%Ash.ForbiddenField{}), do: forbidden_value(nil)
   def encode_result(%Lua.VM.Display.NativeFunc{}), do: %{"opaque" => "function"}
   def encode_result(%Lua.VM.Display.Closure{}), do: %{"opaque" => "function"}
   def encode_result(%Lua.VM.Display.Userdata{}), do: %{"opaque" => "userdata"}
   def encode_result(%Lua.VM.Display.Table{}), do: %{"opaque" => "table_reference"}
+
+  # A field hidden by authorization. In `:hide` mode it's dropped (nil); in
+  # `:display` mode it surfaces as the opaque "forbidden" marker. Must precede
+  # the generic `%_struct{}` clause so the struct's internals never leak.
+  def encode_result(%Ash.ForbiddenField{}), do: forbidden_value(nil)
 
   def encode_result(%_struct{} = record) do
     record

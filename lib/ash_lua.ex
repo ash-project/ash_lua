@@ -56,10 +56,12 @@ defmodule AshLua do
     * `:actor`, `:tenant`, `:context` — host-supplied; merged into every Ash call.
     * `:manifest` — a pre-built `%Ash.Info.Manifest{}` to skip regeneration.
     * `:lua` — a pre-built `%Lua{}` to install bindings on (e.g. with extra `Lua.set!/3` callbacks).
+    * `:lua_options` — options passed to `Lua.new/1` when `:lua` is not supplied.
     * `:forbidden_fields` — `:hide` (default) strips fields hidden by authorization from results;
       `:display` renders them as the opaque marker `%{"opaque" => "forbidden"}` so the consumer can
       tell a forbidden field apart from an absent one.
     * `:decode` — forwarded to `Lua.eval!/3`; defaults to `true`.
+    * `:source` — forwarded to `Lua.eval!/3`; labels runtime errors with a script name.
   """
   @spec eval!(String.t(), keyword()) :: {list(), Lua.t()}
   def eval!(script, opts) when is_binary(script) and is_list(opts) do
@@ -70,10 +72,26 @@ defmodule AshLua do
   Builds a `%Lua{}` VM with Ash bindings installed, ready for repeated `Lua.eval!/2` calls.
 
   Accepts the same `:otp_app` / `:actor` / `:tenant` / `:context` / `:manifest` / `:lua` /
-  `:forbidden_fields` options as `eval!/2`.
+  `:lua_options` / `:forbidden_fields` options as `eval!/2`.
   """
   @spec new(keyword()) :: Lua.t()
   def new(opts \\ []) do
     AshLua.Runtime.build(opts)
+  end
+
+  @doc """
+  Preloads cached eval manifests for every `AshLua.EvalActions` resource in an OTP app.
+
+  Generated eval/docs actions cache their scoped manifest on first use by
+  default. This is an optional production boot-time optimization for
+  applications that want to avoid rebuilding the scoped manifest on the first
+  eval/docs call. Direct runtime calls can opt into the same cache with
+  `cache?: true`.
+
+  Each invocation still gets a fresh Lua VM with its own actor, tenant, and context.
+  """
+  @spec preload_eval_manifests!(atom()) :: [module()]
+  def preload_eval_manifests!(otp_app) when is_atom(otp_app) do
+    AshLua.Surface.preload_eval_manifests!(otp_app)
   end
 end

@@ -6,9 +6,14 @@ defmodule AshLua.SurfaceTest do
   use ExUnit.Case, async: false
 
   alias AshLua.Test.Surface.MCPActions
+  alias AshLua.Test.Surface.MultiLabelMCPActions
   alias AshLua.Test.Surface.Page
 
   defp opts, do: [otp_app: :ash_lua]
+
+  defp eval_manifest_cache do
+    :persistent_term.get({AshLua.Surface, :eval_manifest_cache}, %{})
+  end
 
   test "surface metadata is stored on manifest entrypoints" do
     assert {:ok, %Ash.Info.Manifest{} = manifest} = AshLua.Surface.for_otp_app(:ash_lua)
@@ -50,6 +55,7 @@ defmodule AshLua.SurfaceTest do
     assert "surface.page_list" in callables
     assert "surface.page_create" in callables
     assert "surface.page_rename" in callables
+    assert "surface.admin.page_rename" in callables
     assert "surface.page_summarize" in callables
     refute "pages.list" in callables
     refute "surface.page.list_for_storefront" in callables
@@ -174,6 +180,77 @@ defmodule AshLua.SurfaceTest do
     assert {:ok, %{result: ^title, error: nil}} = Ash.run_action(input)
   end
 
+  test "eval_actions labels scope duplicate resource actions by namespace path" do
+    input =
+      Ash.ActionInput.for_action(MCPActions, :eval, %{
+        script: """
+        return surface.admin == nil
+        """
+      })
+
+    assert {:ok, %{result: true, error: nil}} = Ash.run_action(input)
+  end
+
+  test "labels and action filters intersect on explicit namespace surfaces" do
+    assert {:ok, manifest} =
+             AshLua.Surface.for_otp_app(:ash_lua,
+               labels: [:public],
+               action_entrypoints: [{Page, :rename}]
+             )
+
+    callables = AshLua.Docs.list_callables(manifest)
+
+    assert callables == ["surface.page_rename"]
+  end
+
+  test "labels resolve individual action mappings inside a namespace" do
+    assert {:ok, manifest} = AshLua.Surface.for_otp_app(:ash_lua, labels: [:read_model])
+
+    assert AshLua.Docs.list_callables(manifest) == ["surface.page_list"]
+  end
+
+  test "eval_actions labels include actions matching any requested label" do
+    input = Ash.ActionInput.for_action(MultiLabelMCPActions, :docs, %{})
+
+    assert {:ok, md} = Ash.run_action(input)
+    assert md =~ "- `surface.page_create`"
+    assert md =~ "- `surface.page_list`"
+    assert md =~ "- `surface.page_rename`"
+    assert md =~ "- `surface.admin.page_rename`"
+    refute md =~ "- `surface.page_summarize`"
+  end
+
+  test "for_eval_resource caches manifests only when requested" do
+    AshLua.Surface.clear_eval_manifest_cache!()
+
+    try do
+      assert {:ok, _manifest} = AshLua.Surface.for_eval_resource(MCPActions)
+      refute Map.has_key?(eval_manifest_cache(), MCPActions)
+
+      assert {:ok, _manifest} = AshLua.Surface.for_eval_resource(MCPActions, cache?: true)
+      assert Map.has_key?(eval_manifest_cache(), MCPActions)
+    after
+      AshLua.Surface.clear_eval_manifest_cache!()
+    end
+  end
+
+  test "preload_eval_manifests! warms eval resource manifests for cache opt-in" do
+    AshLua.Surface.clear_eval_manifest_cache!()
+
+    try do
+      resources = AshLua.preload_eval_manifests!(:ash_lua)
+
+      assert MCPActions in resources
+      assert AshLua.Test.Posts.MCPActions in resources
+
+      assert {:ok, manifest} = AshLua.Surface.for_eval_resource(MCPActions, cache?: true)
+      assert "surface.page_list" in AshLua.Docs.list_callables(manifest)
+      refute "surface.admin.page_rename" in AshLua.Docs.list_callables(manifest)
+    after
+      AshLua.Surface.clear_eval_manifest_cache!()
+    end
+  end
+
   test "eval_actions map field_names through returned records" do
     title = unique_title("Eval Record")
     {:ok, _page} = Ash.create(Page, %{title: title}, action: :create)
@@ -204,10 +281,12 @@ defmodule AshLua.SurfaceTest do
 
     assert {:ok, md} = Ash.run_action(input)
     assert md =~ "- `surface.page_list`"
+    assert md =~ "- `surface.page_create`"
     assert md =~ "- `surface.page_rename`"
     assert md =~ "- `surface.page_summarize`"
     assert md =~ "- `surface.page`"
     assert md =~ ~s(name = "full")
+    refute md =~ "- `surface.admin.page_rename`"
     refute md =~ "surface.page.list_for_storefront"
   end
 

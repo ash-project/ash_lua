@@ -8,6 +8,10 @@ defmodule AshLua.EvalActionsTest do
   alias AshLua.Test.Posts.MCPActions
   alias AshLua.Test.Posts.Post
 
+  defp eval_manifest_cache do
+    :persistent_term.get({AshLua.Surface, :eval_manifest_cache}, %{})
+  end
+
   describe "synthesized :eval action" do
     test "runs a Lua script against the scoped Lua surface" do
       {:ok, _} = Ash.create(Post, %{title: "Hello"}, action: :create)
@@ -21,6 +25,19 @@ defmodule AshLua.EvalActionsTest do
         })
 
       assert {:ok, %{result: "Hello", error: nil}} = Ash.run_action(input)
+    end
+
+    test "caches the scoped manifest by default" do
+      AshLua.Surface.clear_eval_manifest_cache!()
+
+      try do
+        input = Ash.ActionInput.for_action(MCPActions, :eval, %{script: "return 42"})
+
+        assert {:ok, %{result: 42, error: nil}} = Ash.run_action(input)
+        assert Map.has_key?(eval_manifest_cache(), MCPActions)
+      after
+        AshLua.Surface.clear_eval_manifest_cache!()
+      end
     end
 
     test "captures a Lua-side (nil, err) into the structured response" do
@@ -102,7 +119,10 @@ defmodule AshLua.EvalActionsTest do
         })
 
       assert {:ok, %{result: nil, error: err}} = Ash.run_action(input)
-      assert [%{"code" => "lua_error"} | _] = err["errors"]
+      assert [%{"code" => "lua_error", "vars" => vars} | _] = err["errors"]
+      refute String.contains?(err["message"], <<27>>)
+      assert is_integer(vars["line"])
+      assert is_map(vars["source_context"])
     end
 
     test "an assert(...) on a failed action surfaces the structured error, not 'object is a table'" do

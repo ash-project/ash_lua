@@ -31,21 +31,34 @@ defmodule AshLua.EvalActions do
     describe: """
     Configures the Lua surface exposed to the synthesized `:eval` and `:docs` actions.
 
-    Each `resource` entry pairs a resource module with the set of action names
-    that the script (and the generated docs) is allowed to see. Use this to
-    apply principle-of-least-privilege per agent surface — only the listed
-    actions become callable from Lua and only those entrypoints appear in
-    `:docs` output.
+    Prefer `labels` to expose mapped Lua actions declared on the domain with
+    `lua do namespace ... action ..., labels: [...] end`. This keeps the eval
+    surface tied to the same public Lua surface used everywhere else.
+
+    The legacy `resource` entries remain supported for derived surfaces and
+    fine-grained compatibility. When both `labels` and `resource` entries are
+    configured, the resource/action list narrows the labelled action surface.
     """,
     examples: [
       """
       eval_actions do
-        resource MyApp.Posts.Post, actions: [:read, :get_statistics]
-        resource MyApp.Posts.Comment, actions: [:read]
+        labels [:public]
+      end
+      """,
+      """
+      eval_actions do
+        labels [:public]
+        resource MyApp.Posts.Post, actions: [:read]
       end
       """
     ],
     schema: [
+      labels: [
+        type: {:list, :atom},
+        default: [],
+        doc:
+          "Mapped action labels to expose to the eval/docs actions. An action is included when it has any requested label."
+      ],
       eval_action_name: [
         type: :atom,
         default: :eval,
@@ -80,16 +93,15 @@ defmodule AshLua.EvalActions do
     use Ash.Resource, extensions: [AshLua.EvalActions]
 
     eval_actions do
-      resource MyApp.Posts.Post, actions: [:read, :get_statistics]
-      resource MyApp.Posts.Comment, actions: [:read]
+      labels [:public]
     end
   end
   ```
 
-  The synthesized actions inherit the caller's actor / tenant / context — both
+  The synthesized actions inherit the caller's actor / tenant / context. Both
   the script body and the documentation rendering are constrained to the
-  configured `(resource, action)` pairs, and every Ash call inside the Lua
-  script flows through the standard authorization machinery.
+  configured action labels, and every Ash call inside the Lua script flows
+  through the standard authorization machinery.
   """
 
   use Spark.Dsl.Extension,

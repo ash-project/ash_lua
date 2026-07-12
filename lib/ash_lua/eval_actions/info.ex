@@ -12,6 +12,11 @@ defmodule AshLua.EvalActions.Info do
   @spec exposes(Ash.Resource.t() | Spark.Dsl.t()) :: [Expose.t()]
   def exposes(resource), do: Extension.get_entities(resource, [:eval_actions]) || []
 
+  @doc "Mapped action labels exposed to the synthesized eval/docs actions."
+  @spec labels(Ash.Resource.t() | Spark.Dsl.t()) :: [atom()]
+  def labels(resource),
+    do: Extension.get_opt(resource, [:eval_actions], :labels, [])
+
   @doc "Name of the synthesized eval action. Defaults to `:eval`."
   @spec eval_action_name(Ash.Resource.t() | Spark.Dsl.t()) :: atom()
   def eval_action_name(resource),

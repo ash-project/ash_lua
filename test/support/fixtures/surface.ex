@@ -27,5 +27,6 @@ defmodule AshLua.Test.Surface do
   resources do
     resource AshLua.Test.Surface.Page
     resource AshLua.Test.Surface.MCPActions
+    resource AshLua.Test.Surface.MultiLabelMCPActions
   end
 end

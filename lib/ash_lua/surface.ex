@@ -344,8 +344,10 @@ defmodule AshLua.Surface do
   defp labels_included?(_labels, nil), do: true
 
   defp labels_included?(labels, %MapSet{} = label_filter) do
-    label_filter
-    |> MapSet.subset?(MapSet.new(labels))
+    labels
+    |> MapSet.new()
+    |> MapSet.intersection(label_filter)
+    |> MapSet.size() != 0
   end
 
   defp namespace_labels(%Namespace{labels: labels}) when is_list(labels), do: labels

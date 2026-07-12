@@ -61,7 +61,7 @@ end
 
 | Name | Type | Default | Docs |
 |------|------|---------|------|
-| [`labels`](#eval_actions-labels){: #eval_actions-labels } | `list(atom)` | `[]` | Mapped action labels to expose to the eval/docs actions. An action is included only when it has all requested labels. |
+| [`labels`](#eval_actions-labels){: #eval_actions-labels } | `list(atom)` | `[]` | Mapped action labels to expose to the eval/docs actions. An action is included when it has any requested label. |
 | [`eval_action_name`](#eval_actions-eval_action_name){: #eval_actions-eval_action_name } | `atom` | `:eval` | Name of the synthesized eval action. Defaults to `:eval`. |
 | [`docs_action_name`](#eval_actions-docs_action_name){: #eval_actions-docs_action_name } | `atom` | `:docs` | Name of the synthesized docs action. Defaults to `:docs`. |
 | [`otp_app`](#eval_actions-otp_app){: #eval_actions-otp_app } | `atom` |  | OTP app to scan when building the manifest. Defaults to the agent resource's domain's `:otp_app`. |

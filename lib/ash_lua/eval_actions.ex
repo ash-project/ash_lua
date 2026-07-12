@@ -57,7 +57,7 @@ defmodule AshLua.EvalActions do
         type: {:list, :atom},
         default: [],
         doc:
-          "Mapped action labels to expose to the eval/docs actions. An action is included only when it has all requested labels."
+          "Mapped action labels to expose to the eval/docs actions. An action is included when it has any requested label."
       ],
       eval_action_name: [
         type: :atom,

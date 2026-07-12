@@ -6,6 +6,7 @@ defmodule AshLua.SurfaceTest do
   use ExUnit.Case, async: false
 
   alias AshLua.Test.Surface.MCPActions
+  alias AshLua.Test.Surface.MultiLabelMCPActions
   alias AshLua.Test.Surface.Page
 
   defp opts, do: [otp_app: :ash_lua]
@@ -206,6 +207,17 @@ defmodule AshLua.SurfaceTest do
     assert {:ok, manifest} = AshLua.Surface.for_otp_app(:ash_lua, labels: [:read_model])
 
     assert AshLua.Docs.list_callables(manifest) == ["surface.page_list"]
+  end
+
+  test "eval_actions labels include actions matching any requested label" do
+    input = Ash.ActionInput.for_action(MultiLabelMCPActions, :docs, %{})
+
+    assert {:ok, md} = Ash.run_action(input)
+    assert md =~ "- `surface.page_create`"
+    assert md =~ "- `surface.page_list`"
+    assert md =~ "- `surface.page_rename`"
+    assert md =~ "- `surface.admin.page_rename`"
+    refute md =~ "- `surface.page_summarize`"
   end
 
   test "for_eval_resource caches manifests only when requested" do

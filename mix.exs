@@ -117,7 +117,7 @@ defmodule AshLua.MixProject do
   defp deps do
     [
       {:ash, ash_version("~> 3.25 and >= 3.25.2")},
-      {:lua, "~> 1.0.0-rc"},
+      {:lua, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:igniter, "~> 0.6", optional: true},
       {:spark, ">= 2.2.10"},

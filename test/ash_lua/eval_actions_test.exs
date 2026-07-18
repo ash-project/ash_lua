@@ -55,8 +55,8 @@ defmodule AshLua.EvalActionsTest do
     end
 
     test "wraps Lua function references as opaque markers so JSON encoding survives" do
-      # `return print` hands us a `{:funref, ...}` Luerl record. The action's
-      # `result` slot is typed `:term`, so without normalization the funref
+      # `return print` hands us an opaque VM function reference. The action's
+      # `result` slot is typed `:term`, so without normalization the reference
       # would reach Jason and crash. Verify it renders as a self-describing
       # opaque marker instead.
       input = Ash.ActionInput.for_action(MCPActions, :eval, %{script: "return print"})
@@ -82,7 +82,7 @@ defmodule AshLua.EvalActionsTest do
       assert {:ok, _} = Jason.encode(%{result: result})
     end
 
-    test "Luerl-decoded Lua arrays come back as plain lists, not nested tuple-maps" do
+    test "decoded Lua arrays come back as plain lists, not nested tuple-maps" do
       input =
         Ash.ActionInput.for_action(MCPActions, :eval, %{
           script: """

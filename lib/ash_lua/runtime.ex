@@ -135,10 +135,6 @@ defmodule AshLua.Runtime do
   defp format_print_arg(_state, {:native_func, _}), do: "<function>"
   defp format_print_arg(_state, {:lua_closure, _, _}), do: "<function>"
   defp format_print_arg(_state, {:compiled_closure, _, _}), do: "<function>"
-  defp format_print_arg(_state, {:funref, _, _}), do: "<function>"
-  defp format_print_arg(_state, {:erl_func, _}), do: "<function>"
-  defp format_print_arg(_state, {:erl_mfa, _, _, _}), do: "<function>"
-  defp format_print_arg(_state, {:usdref, _}), do: "<userdata>"
   defp format_print_arg(_state, {:udref, _}), do: "<userdata>"
   defp format_print_arg(_state, value), do: inspect(value)
 
@@ -381,7 +377,7 @@ defmodule AshLua.Runtime do
               {:body_ok, values}
 
             {:error, reason, new_state} ->
-              # Stash both the state AND the original Lua error tuple. The
+              # Stash both the state AND the original Lua exception. The
               # data layer's rollback wrapper calls `Mnesia.abort/1` on our
               # `{:error, reason}` return; Mnesia's transaction catch then
               # `Exception.format_exit/1`s the tuple to a string before
@@ -421,7 +417,7 @@ defmodule AshLua.Runtime do
 
         {{:error, _ash_error}, lua_error} when not is_nil(lua_error) ->
           # Rollback was triggered by a Lua-side error; we stashed the
-          # original tuple before Mnesia's exit-formatting wrapped it.
+          # original exception before Mnesia's exit-formatting wrapped it.
           encode_lua_transaction_error(new_state, lua_error)
 
         {{:error, ash_error}, _} ->
@@ -445,31 +441,21 @@ defmodule AshLua.Runtime do
     end
   end
 
-  defp encode_lua_transaction_error(state, {:assert_error, value}) do
-    encode_lua_transaction_error_body(state, value)
+  # `Lua.call_function/3` reports failures as `%Lua.RuntimeException{}`; the
+  # raised Lua value (string, table ref, ...) is on `:value`. The exception
+  # itself carries no VM state, so refs are decoded against the post-call
+  # `%Lua{}` we stashed through the message channel.
+  defp encode_lua_transaction_error(state, %Lua.RuntimeException{value: nil}) do
+    encode_lua_transaction_error(state, :unknown)
   end
 
-  defp encode_lua_transaction_error(state, {:error_call, [value | _]}) do
-    encode_lua_transaction_error_body(state, value)
-  end
-
-  # `utils.transaction.rollback` raises with the encoded value directly, so
-  # the captured error reason can be a bare `{:tref, _}` rather than one of
-  # the wrapped shapes above.
-  defp encode_lua_transaction_error(state, {:tref, _} = tref) do
-    encode_lua_transaction_error_body(state, tref)
-  end
-
-  defp encode_lua_transaction_error(state, message) when is_binary(message) do
+  defp encode_lua_transaction_error(state, %Lua.RuntimeException{value: message})
+       when is_binary(message) do
     encode_lua_transaction_error_body(state, strip_lua_location(message))
   end
 
-  defp encode_lua_transaction_error(state, error) when is_struct(error) do
-    case {Map.get(error, :value), Map.get(error, :state)} do
-      {nil, _state} -> encode_lua_transaction_error(state, :unknown)
-      {_value, nil} -> encode_lua_transaction_error(state, :unknown)
-      {value, lua_state} -> encode_lua_transaction_error_body(%Lua{state: lua_state}, value)
-    end
+  defp encode_lua_transaction_error(state, %Lua.RuntimeException{value: value}) do
+    encode_lua_transaction_error_body(state, value)
   end
 
   defp encode_lua_transaction_error(state, _other) do

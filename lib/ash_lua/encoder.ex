@@ -173,17 +173,8 @@ defmodule AshLua.Encoder do
   def encode_result({:native_func, _}), do: %{"opaque" => "function"}
   def encode_result({:lua_closure, _, _}), do: %{"opaque" => "function"}
   def encode_result({:compiled_closure, _, _}), do: %{"opaque" => "function"}
-  def encode_result({:funref, _, _}), do: %{"opaque" => "function"}
-  def encode_result({:erl_func, _}), do: %{"opaque" => "function"}
-  def encode_result({:erl_mfa, _, _, _}), do: %{"opaque" => "function"}
   def encode_result({:tref, _}), do: %{"opaque" => "table_reference"}
   def encode_result({:udref, _}), do: %{"opaque" => "userdata"}
-  def encode_result({:usdref, _}), do: %{"opaque" => "userdata"}
-  # The Lua VM can also return the decoded shape `{module, function, arity_or_undefined}`
-  # for built-in callables.
-  def encode_result({m, f, a})
-      when is_atom(m) and is_atom(f) and (is_integer(a) or is_atom(a)),
-      do: %{"opaque" => "function"}
 
   # An installed Erlang/Elixir callback (e.g. our overridden `print`) decodes
   # as a bare Erlang fun on the way back out. Same opaque marker.

@@ -194,8 +194,11 @@ defmodule AshLua.Eval do
        }}
   end
 
-  defp extract_structured_error(%Lua.RuntimeException{original: original, state: state}) do
-    case {raised_value(original), lua_state(original, state)} do
+  # The raised Lua value and the VM state at the point of failure both live on
+  # the wrapped VM exception (`:original`); the outer `Lua.RuntimeException`
+  # never carries state itself.
+  defp extract_structured_error(%Lua.RuntimeException{original: original}) do
+    case {raised_value(original), vm_state(original)} do
       {nil, _state} -> nil
       {_value, nil} -> nil
       {value, lua_state} -> value |> safe_decode(lua_state) |> normalize_error_table()
@@ -204,13 +207,11 @@ defmodule AshLua.Eval do
 
   defp extract_structured_error(_), do: nil
 
-  defp raised_value({:assert_error, value}), do: value
-  defp raised_value({:error_call, [value | _]}), do: value
   defp raised_value(error) when is_struct(error), do: Map.get(error, :value)
   defp raised_value(_), do: nil
 
-  defp lua_state(original, nil) when is_struct(original), do: Map.get(original, :state)
-  defp lua_state(_original, state), do: state
+  defp vm_state(error) when is_struct(error), do: Map.get(error, :state)
+  defp vm_state(_), do: nil
 
   defp safe_decode(value, state) do
     Lua.decode!(%Lua{state: state}, value)

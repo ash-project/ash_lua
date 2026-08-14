@@ -315,6 +315,70 @@ defmodule AshLua.SurfaceTest do
     refute generic_md =~ "| `title_text` |"
   end
 
+  describe "for_manifest/1 re-annotation" do
+    test "annotates entrypoints spanning domains owned by different OTP apps" do
+      filter = [
+        {AshLua.Test.DepApp.Widget, :read},
+        {AshLua.Test.Surface.Page, :list_for_storefront}
+      ]
+
+      assert {:ok, manifest} = AshLua.Surface.for_otp_app(:ash_lua, action_entrypoints: filter)
+      assert length(manifest.entrypoints) == 2
+
+      # Strip the AshLua annotations and put the dependency-owned entrypoint
+      # first, like a pre-built manifest handed to Runtime.build/1.
+      stripped = %{
+        manifest
+        | entrypoints:
+            manifest.entrypoints
+            |> Enum.map(&%{&1 | config: %{}})
+            |> Enum.sort_by(&(&1.resource != AshLua.Test.DepApp.Widget))
+      }
+
+      annotated = AshLua.Surface.for_manifest(stripped)
+
+      assert length(annotated.entrypoints) == 2
+      assert {:ok, _} = AshLua.Surface.find_entrypoint(annotated, "dep.widget_list")
+      assert {:ok, _} = AshLua.Surface.find_entrypoint(annotated, "surface.page_list")
+    end
+
+    test "warns when re-annotation drops entrypoints not on the lua surface" do
+      # Widget's :create is public but not exposed by the "dep" namespace.
+      filter = [{AshLua.Test.DepApp.Widget, :create}]
+
+      assert {:ok, manifest} = AshLua.Surface.for_otp_app(:ash_lua, action_entrypoints: nil)
+
+      entrypoint =
+        Enum.find(
+          manifest.entrypoints,
+          &(&1.resource == AshLua.Test.Surface.Page and &1.action.name == :list_for_storefront)
+        )
+
+      assert entrypoint
+
+      {:ok, unexposed} =
+        Ash.Info.Manifest.generate(otp_app: :ash_lua, action_entrypoints: filter)
+
+      assert [%{resource: AshLua.Test.DepApp.Widget} = create_entrypoint] = unexposed.entrypoints
+
+      stripped = %{
+        manifest
+        | entrypoints: [%{entrypoint | config: %{}}, create_entrypoint]
+      }
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          annotated = AshLua.Surface.for_manifest(stripped)
+
+          assert length(annotated.entrypoints) == 1
+          assert {:ok, _} = AshLua.Surface.find_entrypoint(annotated, "surface.page_list")
+        end)
+
+      assert log =~ "dropped 1 entrypoint(s)"
+      assert log =~ "AshLua.Test.DepApp.Widget.create"
+    end
+  end
+
   defp unique_title(prefix) do
     "#{prefix} #{System.unique_integer([:positive])}"
   end

@@ -10,6 +10,8 @@ defmodule AshLua.Surface do
   callable path metadata under each entrypoint's `config[:ash_lua]`.
   """
 
+  require Logger
+
   alias Ash.Info.Manifest
   alias AshLua.Domain.{Action, Namespace}
 
@@ -148,6 +150,10 @@ defmodule AshLua.Surface do
   Domains with explicit `lua do namespace ... end` actions expose only those
   configured actions. Domains without explicit surface actions retain the legacy
   derived shape: `<domain>.<resource>.<action>`.
+
+  Each entrypoint is annotated from its own resource's domain, so manifests may
+  span domains owned by different OTP apps. Entrypoints that are not exposed on
+  their domain's Lua surface are dropped with a logged warning.
   """
   @spec for_manifest(Manifest.t()) :: Manifest.t()
   def for_manifest(%Manifest{entrypoints: []} = manifest), do: manifest
@@ -162,9 +168,11 @@ defmodule AshLua.Surface do
 
   defp annotate_manifest(%Manifest{} = manifest) do
     filter =
-      Enum.map(manifest.entrypoints, fn %Manifest.Entrypoint{} = entrypoint ->
+      manifest.entrypoints
+      |> Enum.map(fn %Manifest.Entrypoint{} = entrypoint ->
         {entrypoint.resource, entrypoint.action.name}
       end)
+      |> filter_set()
 
     entries_by_key =
       Enum.group_by(manifest.entrypoints, fn %Manifest.Entrypoint{} = entrypoint ->
@@ -172,9 +180,12 @@ defmodule AshLua.Surface do
       end)
 
     entrypoints =
-      manifest
-      |> otp_app_from_manifest()
-      |> action_entrypoints_for_otp_app(filter, [])
+      manifest.entrypoints
+      |> Enum.map(&Ash.Resource.Info.domain(&1.resource))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+      |> Enum.flat_map(&action_entrypoints_for_domain(&1, filter, nil))
+      |> Enum.sort_by(fn %{config: %{@config_key => %{path_string: path}}} -> path end)
       |> Enum.flat_map(fn %{resource: resource, action: action, config: config} ->
         case Map.get(entries_by_key, {resource, action}) do
           nil ->
@@ -185,7 +196,29 @@ defmodule AshLua.Surface do
         end
       end)
 
+    warn_on_dropped_entrypoints(manifest.entrypoints, entrypoints)
+
     %{manifest | entrypoints: entrypoints}
+  end
+
+  defp warn_on_dropped_entrypoints(original, annotated) do
+    annotated_keys = MapSet.new(annotated, &{&1.resource, &1.action.name})
+
+    dropped =
+      original
+      |> Enum.map(&{&1.resource, &1.action.name})
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(annotated_keys, &1))
+
+    if dropped != [] do
+      Logger.warning(
+        "AshLua.Surface.for_manifest/1 dropped #{length(dropped)} entrypoint(s) not exposed " <>
+          "on the Lua surface of their domains: " <>
+          Enum.map_join(dropped, ", ", fn {resource, action} ->
+            "#{inspect(resource)}.#{action}"
+          end)
+      )
+    end
   end
 
   @doc "Deprecated compatibility alias for `for_manifest/1`."
@@ -359,18 +392,6 @@ defmodule AshLua.Surface do
   defp effective_labels(namespace_labels, %Action{} = action) do
     (namespace_labels ++ action_labels(action))
     |> Enum.uniq()
-  end
-
-  defp otp_app_from_manifest(%Manifest{
-         entrypoints: [%Manifest.Entrypoint{resource: resource} | _]
-       }) do
-    resource
-    |> Ash.Resource.Info.domain()
-    |> Spark.otp_app()
-  end
-
-  defp otp_app_from_manifest(%Manifest{}) do
-    raise ArgumentError, "cannot infer otp_app from an empty manifest"
   end
 
   defp legacy_path(resource, action_name) do

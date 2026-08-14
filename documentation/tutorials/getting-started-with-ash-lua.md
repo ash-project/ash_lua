@@ -128,8 +128,16 @@ a failed call returns `(nil, err_table)`.
 local user, err = accounts.user.create({ input = { name = "Zach" } })
 
 if err then
-  -- err is a table: { message = "...", errors = { { code = "...", fields = {...}, ... }, ... } }
-  print("create failed:", err.message)
+  -- err is a table:
+  --   {
+  --     class = "invalid" | "forbidden" | "framework" | "unknown",
+  --     errors = { { message = "...", short_message = "...", code = "...", fields = {...}, vars = {...} }, ... }
+  --   }
+  -- There is no top-level message — a failure can carry several errors, so
+  -- report the entries under `errors`:
+  for _, e in ipairs(err.errors) do
+    print("create failed:", e.message)
+  end
 else
   print("created user:", user.id)
 end
@@ -143,7 +151,11 @@ local user = assert(accounts.user.create({ input = { name = "Zach" } }))
 
 `assert` returns the first value when the second is `nil`, and raises with the
 second value otherwise — so it works exactly like an Elixir `!` variant for
-free.
+free. Note that what's raised is the error *table*: `AshLua.Eval` recovers it
+and returns it as the structured `error` in its result, but if you're calling
+`AshLua.eval!/2` directly the raise surfaces as an opaque
+`Lua.RuntimeException`. When you need a readable message rather than raise
+semantics, use the two-value form above.
 
 ## 5. Choosing which fields come back
 

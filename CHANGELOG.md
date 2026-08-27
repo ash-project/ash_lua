@@ -11,6 +11,25 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.2.0](https://github.com/ash-project/ash_lua/compare/v0.1.6...v0.2.0) (2026-08-27)
+
+
+
+
+### Features:
+
+* Expose generic eval runtime (#6) by olivermt [(#6)](https://github.com/ash-project/ash_lua/pull/6)
+
+### Bug Fixes:
+
+* don't drop entrypoints from manifest when using multiple otp apps by [@zachdaniel](https://github.com/zachdaniel)
+
+### Improvements:
+
+* Migrate to lua 1.0 (#9) by Dave Lucia [(#9)](https://github.com/ash-project/ash_lua/pull/9)
+
+* Prepare native Lua release candidate (#5) by olivermt [(#5)](https://github.com/ash-project/ash_lua/pull/5)
+
 ## [v0.1.6](https://github.com/ash-project/ash_lua/compare/v0.1.5...v0.1.6) (2026-06-10)
 
 

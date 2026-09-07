@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.2.1](https://github.com/ash-project/ash_lua/compare/v0.2.0...v0.2.1) (2026-09-07)
+
+
+
+
+### Bug Fixes:
+
+* enforce the exposed-field allow-list on the read operation path (CVE-2026-82586) by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.2.0](https://github.com/ash-project/ash_lua/compare/v0.1.6...v0.2.0) (2026-08-27)
 
 

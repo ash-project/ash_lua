@@ -323,6 +323,23 @@ defmodule AshLua.FieldsTest do
       assert published == 2
     end
 
+    test "operation cannot aggregate a non-exposed field" do
+      Ash.Seed.seed!(Post, %{title: "a", secret: "s3cr3t"})
+
+      {[result, err], _lua} =
+        AshLua.eval!(
+          """
+          return posts.post.read({ operation = { "list", "secret" } })
+          """,
+          otp_app: :ash_lua
+        )
+
+      assert is_nil(result)
+      err_map = Map.new(err)
+      first = err_map["errors"] |> List.first() |> elem(1) |> Map.new()
+      assert first["message"] == "unknown field `secret`"
+    end
+
     test "exists returns a boolean" do
       {:ok, _} = Ash.create(Post, %{title: "anything"}, action: :create)
 

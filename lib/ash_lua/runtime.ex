@@ -584,6 +584,8 @@ defmodule AshLua.Runtime do
             AshLua.FieldNames.to_internal_action_input(resource, action, action_input)
 
           input = Map.merge(action_input, controls)
+
+          raw_operation = operation
           operation = AshLua.FieldNames.to_internal_operation(resource, operation)
 
           cond do
@@ -591,7 +593,13 @@ defmodule AshLua.Runtime do
               regular_call(resource, action, input, ash_opts, fields_input, manifest, state)
 
             action.type == :read ->
-              operation_call(resource, action, input, ash_opts, operation, state)
+              case validate_operation_field(manifest, resource, action, raw_operation) do
+                :ok ->
+                  operation_call(resource, action, input, ash_opts, operation, state)
+
+                {:error, reason} ->
+                  encode_action_error_response(state, resource, action, reason)
+              end
 
             true ->
               t = Atom.to_string(action.type)
@@ -722,6 +730,16 @@ defmodule AshLua.Runtime do
     {encoded, state} = Lua.encode!(state, Encoder.encode_error(error))
     {[nil, encoded], state}
   end
+
+  defp validate_operation_field(manifest, resource, action, [op, field])
+       when is_binary(op) and (is_binary(field) or is_atom(field)) do
+    case AshLua.Fields.for_action(manifest, resource, action, [field]) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp validate_operation_field(_manifest, _resource, _action, _operation), do: :ok
 
   defp encode_action_error_response(state, resource, action, error) do
     encoded_error =

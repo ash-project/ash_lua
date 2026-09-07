@@ -52,6 +52,11 @@ defmodule AshLua.Test.Posts.Post do
       public? true
     end
 
+    attribute :secret, :string do
+      public? false
+      sensitive? true
+    end
+
     attribute :status, AshLua.Test.Posts.Post.Status do
       default :draft
       public? true

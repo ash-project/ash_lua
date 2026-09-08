@@ -766,7 +766,7 @@ defmodule AshLua.Runtime do
       |> maybe_limit(limit)
       |> maybe_offset(offset)
 
-    perform_operation(query, resource, operation, opts)
+    perform_operation(query, resource, operation, Keyword.put(opts, :authorize_fields?, true))
   end
 
   defp perform_operation(query, _resource, "count", opts) do

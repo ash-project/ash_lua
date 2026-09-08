@@ -91,6 +91,32 @@ defmodule AshLua.ForbiddenFieldsTest do
     end
   end
 
+  describe "operation path respects field policies" do
+    @list_secret """
+    return posts.secret_post.read({ operation = { "list", "secret" } })
+    """
+
+    setup do
+      Ash.Seed.seed!(SecretPost, %{title: "T2", secret: "shh"})
+      :ok
+    end
+
+    test "a non-admin cannot read a field-policy-forbidden field via a list aggregate" do
+      {[result, err], _lua} = AshLua.eval!(@list_secret, otp_app: :ash_lua, actor: nil)
+
+      assert is_nil(result)
+      refute inspect(err) =~ "shh"
+    end
+
+    test "an admin can read it via a list aggregate" do
+      {[result, _err], _lua} =
+        AshLua.eval!(@list_secret, otp_app: :ash_lua, actor: %{admin: true})
+
+      values = Enum.map(List.wrap(result), fn {_i, v} -> v end)
+      assert "shh" in values
+    end
+  end
+
   describe ":docs action annotates protected fields" do
     test "fields covered by a field policy are flagged; unprotected ones are not" do
       input = Ash.ActionInput.for_action(ForbiddenDisplayMCPActions, :docs, %{name: "full"})

@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.2.2](https://github.com/ash-project/ash_lua/compare/v0.2.1...v0.2.2) (2026-09-08)
+
+
+
+
+### Bug Fixes:
+
+* authorize aggregated fields on the read operation path (CVE-2026-78216) by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.2.1](https://github.com/ash-project/ash_lua/compare/v0.2.0...v0.2.1) (2026-09-07)
 
 

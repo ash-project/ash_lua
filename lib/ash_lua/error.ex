@@ -90,6 +90,164 @@ defimpl AshLua.Error, for: Ash.Error.Query.InvalidPage do
   end
 end
 
+# Query construction errors from `filter` / `sort` input. None of these reuse
+# Ash's own `message/1`: on some data layers it interpolates the resource
+# module or the full data-layer query (`InvalidFilterValue`'s `context`), which
+# must not reach the script.
+
+defimpl AshLua.Error, for: Ash.Error.Query.NoSuchField do
+  def to_error(error) do
+    AshLua.Error.Helpers.unknown_field(error, error.field)
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.NoSuchAttribute do
+  def to_error(error) do
+    AshLua.Error.Helpers.unknown_field(error, error.attribute)
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.NoSuchRelationship do
+  def to_error(error) do
+    AshLua.Error.Helpers.unknown_field(error, error.relationship)
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.NoSuchFilterPredicate do
+  def to_error(error) do
+    predicate = to_string(error.key)
+
+    %{
+      message: "no such filter predicate `#{predicate}`",
+      short_message: "no such filter predicate",
+      code: "no_such_filter_predicate",
+      vars: Map.merge(Map.new(error.vars), %{predicate: predicate}),
+      fields: []
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.InvalidFilterValue do
+  def to_error(error) do
+    vars =
+      error.vars
+      |> Map.new()
+      |> Map.put(:value, inspect(error.value))
+      |> then(fn vars ->
+        if is_binary(error.message), do: Map.put(vars, :detail, error.message), else: vars
+      end)
+
+    %{
+      message: "invalid filter value",
+      short_message: "invalid filter value",
+      code: "invalid_filter_value",
+      vars: vars,
+      fields: AshLua.Error.Helpers.predicate_fields(error.value)
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.InvalidFilterReference do
+  def to_error(error) do
+    message =
+      if error.simple_equality? do
+        "cannot be referenced in filters, except by simple equality"
+      else
+        "cannot be referenced in filters"
+      end
+
+    %{
+      message: message,
+      short_message: "invalid filter reference",
+      code: "invalid_filter_reference",
+      vars: Map.new(error.vars),
+      fields: List.wrap(error.field)
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.UnsortableField do
+  def to_error(error) do
+    %{
+      message: "is not sortable",
+      short_message: "unsortable field",
+      code: "unsortable_field",
+      vars: Map.new(error.vars),
+      fields: List.wrap(error.field)
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.InvalidSortOrder do
+  def to_error(error) do
+    %{
+      message: "no such sort order `%{order}`",
+      short_message: "invalid sort order",
+      code: "invalid_sort_order",
+      vars: Map.merge(Map.new(error.vars), %{order: inspect(error.order)}),
+      fields: []
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.NoSuchOperator do
+  def to_error(error) do
+    %{
+      message: "no such operator `%{operator}`",
+      short_message: "no such operator",
+      code: "no_such_operator",
+      vars: Map.merge(Map.new(error.vars), %{operator: to_string(error.operator)}),
+      fields: []
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.NoSuchFunction do
+  def to_error(error) do
+    %{
+      message: "no such function `%{function}`",
+      short_message: "no such function",
+      code: "no_such_function",
+      vars:
+        Map.merge(Map.new(error.vars), %{
+          function: to_string(error.function),
+          arity: error.arity
+        }),
+      fields: []
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.UnsupportedPredicate do
+  def to_error(error) do
+    %{
+      message: "the data layer does not support this predicate for this field type",
+      short_message: "unsupported predicate",
+      code: "unsupported_predicate",
+      vars: Map.merge(Map.new(error.vars), %{predicate: inspect(error.predicate)}),
+      fields: []
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Invalid.NoSuchInput do
+  def to_error(error) do
+    input = to_string(error.input)
+
+    %{
+      message: "no such input `#{input}`",
+      short_message: "no such input",
+      code: "no_such_input",
+      vars:
+        Map.merge(Map.new(error.vars), %{
+          name: input,
+          did_you_mean: Enum.map(error.did_you_mean || [], &to_string/1)
+        }),
+      fields: [error.input]
+    }
+  end
+end
+
 defimpl AshLua.Error, for: Ash.Error.Page.InvalidKeyset do
   def to_error(error) do
     %{
@@ -267,4 +425,48 @@ if Code.ensure_loaded?(AshAuthentication.Errors.InvalidToken) do
       }
     end
   end
+end
+
+defmodule AshLua.Error.Helpers do
+  @moduledoc false
+
+  # A reference to a field that does not exist, whether it came from `fields`,
+  # `filter`, or `sort`. Shares the `unknown_field` code with the field
+  # selection layer so scripts see one code for "you named a field that isn't
+  # there"; `vars.path` says which reserved key it was in.
+  @spec unknown_field(struct(), atom() | String.t()) :: map()
+  def unknown_field(error, name) do
+    name_string = to_string(name)
+
+    vars =
+      error.vars
+      |> Map.new()
+      |> Map.put(:name, name_string)
+      |> then(fn vars ->
+        case error.path do
+          [] -> vars
+          path -> Map.put(vars, :path, Enum.map(path, &to_string/1))
+        end
+      end)
+
+    %{
+      message: "unknown field `#{name_string}`",
+      short_message: "unknown field",
+      code: "unknown_field",
+      vars: vars,
+      fields: [name]
+    }
+  end
+
+  # `InvalidFilterValue.value` is usually the offending predicate; pull the
+  # referenced field out of it when it has one so the error can be shown
+  # next to that field.
+  @spec predicate_fields(term()) :: [atom()]
+  def predicate_fields(%{left: %Ash.Query.Ref{} = ref}), do: ref_fields(ref)
+  def predicate_fields(%{arguments: [%Ash.Query.Ref{} = ref | _]}), do: ref_fields(ref)
+  def predicate_fields(_), do: []
+
+  defp ref_fields(%Ash.Query.Ref{attribute: %{name: name}}) when is_atom(name), do: [name]
+  defp ref_fields(%Ash.Query.Ref{attribute: name}) when is_atom(name), do: [name]
+  defp ref_fields(_), do: []
 end

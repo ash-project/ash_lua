@@ -298,9 +298,13 @@ defmodule AshLua.Docs do
     of validation failures with several field errors at once).
 
     Stable per-error `code` values include `required`, `invalid_attribute`,
-    `invalid_argument`, `invalid_query`, `not_found`, `forbidden`,
-    `forbidden_field`, `invalid_primary_key`, `unknown_field`, and a fallback
-    `unknown_error` (with a `vars.uuid` to look up in host logs).
+    `invalid_argument`, `no_such_input`, `invalid_query`, `not_found`,
+    `forbidden`, `forbidden_field`, `invalid_primary_key`, `unknown_field`
+    (a name that does not exist, in `fields`, `filter`, or `sort` — see
+    `vars.path`), `no_such_filter_predicate`, `invalid_filter_value`,
+    `invalid_filter`, `invalid_sort`, `invalid_limit`, `invalid_offset`,
+    `invalid_page`, and a fallback `unknown_error` (with a `vars.uuid` to look
+    up in host logs).
 
     `fields` lists the field names this error pertains to and is useful for
     surfacing validation problems next to form inputs. `vars` is a free-form
@@ -308,6 +312,15 @@ defmodule AshLua.Docs do
 
     A failed `assert` raises with the error table as the Lua error object; you
     can `pcall` it if you need to recover from a raise.
+
+    ## Script failures
+
+    When the script itself fails — a syntax error, a Lua runtime error such as
+    indexing `nil`, or an exceeded safety budget — the host reports it with
+    `class = "lua_error"` and a single `errors` entry whose `code` is
+    `"lua_error"`. Because that envelope always holds exactly one entry, it
+    also carries a top-level `message`. A bare non-table value returned in the
+    error slot (`return nil, "oops"`) is reported the same way.
     """
   }
 

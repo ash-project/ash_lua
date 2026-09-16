@@ -570,70 +570,91 @@ defmodule AshLua.Runtime do
 
   defp build_action_callback(resource, action, manifest) do
     fn args, state ->
-      call_input = decode_call_args(state, args)
-
-      case split_call_input(call_input) do
-        {:ok, action_input, controls} ->
-          ash_opts = build_ash_opts(state)
-          {fields_input, controls} = Map.pop(controls, "fields")
-          {operation, controls} = Map.pop(controls, "operation")
-
-          controls = AshLua.FieldNames.to_internal_input(resource, action, controls)
-
-          action_input =
-            AshLua.FieldNames.to_internal_action_input(resource, action, action_input)
-
-          raw_operation = operation
-          operation = AshLua.FieldNames.to_internal_operation(resource, operation)
-
-          cond do
-            is_nil(operation) ->
-              regular_call(
-                resource,
-                action,
-                action_input,
-                controls,
-                ash_opts,
-                fields_input,
-                manifest,
-                state
-              )
-
-            action.type == :read ->
-              case validate_operation_field(manifest, resource, action, raw_operation) do
-                :ok ->
-                  operation_call(
-                    resource,
-                    action,
-                    action_input,
-                    controls,
-                    ash_opts,
-                    operation,
-                    state
-                  )
-
-                {:error, reason} ->
-                  encode_action_error_response(state, resource, action, reason)
-              end
-
-            true ->
-              t = Atom.to_string(action.type)
-
-              encode_error_response(
-                state,
-                %AshLua.Errors.FieldsError{
-                  message: "`operation` is only supported on list operations (this is `#{t}`)",
-                  short_message: "operation only on list operations",
-                  code: "operation_only_on_list_operations",
-                  fields: [],
-                  vars: %{"action_type" => t}
-                }
-              )
-          end
-
-        {:error, error} ->
-          encode_error_response(state, error)
+      try do
+        run_action_callback(resource, action, manifest, args, state)
+      rescue
+        exception ->
+          encode_host_exception(state, resource, action, exception, __STACKTRACE__)
       end
+    end
+  end
+
+  # A host exception that escapes the call — from query construction, the
+  # data layer, or a raise inside an action's own code — must never abort the
+  # script or reach it as text. It's rendered like any other failed call: as a
+  # `(nil, err)` return. Ash error classes (which is what Ash raises for
+  # exceptions inside actions) render through the normal per-leaf protocol;
+  # anything else becomes an opaque `unknown_error` whose uuid is logged with
+  # the full exception by the encoder.
+  defp encode_host_exception(state, resource, action, exception, stacktrace) do
+    error = Ash.Error.to_error_class(exception, stacktrace: stacktrace)
+    encode_action_error_response(state, resource, action, error)
+  end
+
+  defp run_action_callback(resource, action, manifest, args, state) do
+    call_input = decode_call_args(state, args)
+
+    case split_call_input(call_input) do
+      {:ok, action_input, controls} ->
+        ash_opts = build_ash_opts(state)
+        {fields_input, controls} = Map.pop(controls, "fields")
+        {operation, controls} = Map.pop(controls, "operation")
+
+        controls = AshLua.FieldNames.to_internal_input(resource, action, controls)
+
+        action_input =
+          AshLua.FieldNames.to_internal_action_input(resource, action, action_input)
+
+        raw_operation = operation
+        operation = AshLua.FieldNames.to_internal_operation(resource, operation)
+
+        cond do
+          is_nil(operation) ->
+            regular_call(
+              resource,
+              action,
+              action_input,
+              controls,
+              ash_opts,
+              fields_input,
+              manifest,
+              state
+            )
+
+          action.type == :read ->
+            case validate_operation_field(manifest, resource, action, raw_operation) do
+              :ok ->
+                operation_call(
+                  resource,
+                  action,
+                  action_input,
+                  controls,
+                  ash_opts,
+                  operation,
+                  state
+                )
+
+              {:error, reason} ->
+                encode_action_error_response(state, resource, action, reason)
+            end
+
+          true ->
+            t = Atom.to_string(action.type)
+
+            encode_error_response(
+              state,
+              %AshLua.Errors.FieldsError{
+                message: "`operation` is only supported on list operations (this is `#{t}`)",
+                short_message: "operation only on list operations",
+                code: "operation_only_on_list_operations",
+                fields: [],
+                vars: %{"action_type" => t}
+              }
+            )
+        end
+
+      {:error, error} ->
+        encode_error_response(state, error)
     end
   end
 
@@ -979,10 +1000,38 @@ defmodule AshLua.Runtime do
   defp append_if(list, true, item), do: list ++ [item]
 
   defp maybe_filter_input(query, nil), do: query
-  defp maybe_filter_input(query, filter), do: Ash.Query.filter_input(query, filter)
+
+  # `filter_input/2` reports most bad input on the query, but a malformed
+  # shape (an empty `or`, a non-table combinator, ...) can still raise from
+  # deep inside the filter parser. Treat any such raise as invalid input on
+  # `filter` rather than letting it escape to the script.
+  defp maybe_filter_input(query, filter) do
+    Ash.Query.filter_input(query, filter)
+  rescue
+    _exception ->
+      Ash.Query.add_error(query, :filter, %AshLua.Errors.FieldsError{
+        message: "invalid filter",
+        short_message: "invalid filter",
+        code: "invalid_filter",
+        fields: ["filter"],
+        vars: %{}
+      })
+  end
 
   defp maybe_sort_input(query, nil), do: query
-  defp maybe_sort_input(query, sort), do: Ash.Query.sort_input(query, sort)
+
+  defp maybe_sort_input(query, sort) do
+    Ash.Query.sort_input(query, sort)
+  rescue
+    _exception ->
+      Ash.Query.add_error(query, :sort, %AshLua.Errors.FieldsError{
+        message: "invalid sort",
+        short_message: "invalid sort",
+        code: "invalid_sort",
+        fields: ["sort"],
+        vars: %{}
+      })
+  end
 
   defp maybe_limit(query, nil), do: query
   defp maybe_limit(query, limit), do: Ash.Query.limit(query, limit)

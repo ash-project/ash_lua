@@ -36,6 +36,14 @@ defmodule AshLua.Test.Posts.Post do
       end
     end
 
+    # Raises from inside the action so tests can check that a host exception
+    # is returned to the script as a structured error rather than aborting it.
+    action :explode, :integer do
+      run fn _input, _context ->
+        raise "kaboom: this text must not reach the script"
+      end
+    end
+
     action :word_count, :integer do
       argument :text, :string, allow_nil?: false
 

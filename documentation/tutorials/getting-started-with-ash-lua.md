@@ -157,6 +157,12 @@ and returns it as the structured `error` in its result, but if you're calling
 `Lua.RuntimeException`. When you need a readable message rather than raise
 semantics, use the two-value form above.
 
+If the script itself fails — a syntax error, a runtime error like indexing
+`nil`, or an exceeded safety budget — `AshLua.Eval.run/2` reports that with
+`class = "lua_error"`, a single entry under `errors` with `code = "lua_error"`,
+and a top-level `message` (a script failure is always exactly one error, so a
+summary line can't misrepresent it).
+
 ## 5. Choosing which fields come back
 
 By default, operations that return records return **only the primary key**.

@@ -10,23 +10,23 @@ defmodule AshLua.Errors.FieldsError do
 
   The `AshLua.Error` protocol impl unwraps this directly to the standard
   error shape — no central switch over internal tags.
+
+  This is a Splode error of class `:invalid`, so it can be attached to an
+  `Ash.Query` with `Ash.Query.add_error/3` and Ash will keep it as an invalid
+  input error instead of wrapping it as unknown.
   """
+
+  use Splode.Error,
+    fields: [:message, :short_message, :code, fields: []],
+    class: :invalid
 
   @type t :: %__MODULE__{
           message: String.t(),
           short_message: String.t(),
           code: String.t(),
           fields: [String.t()],
-          vars: map()
+          vars: map() | Keyword.t()
         }
-
-  defexception [
-    :message,
-    :short_message,
-    :code,
-    fields: [],
-    vars: %{}
-  ]
 
   @impl true
   def message(%__MODULE__{message: m}), do: m

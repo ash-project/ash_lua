@@ -54,6 +54,42 @@ defimpl AshLua.Error, for: Ash.Error.Query.InvalidQuery do
   end
 end
 
+defimpl AshLua.Error, for: Ash.Error.Query.InvalidLimit do
+  def to_error(error) do
+    %{
+      message: "%{value} is not a valid limit",
+      short_message: "invalid limit",
+      code: "invalid_limit",
+      vars: Map.merge(Map.new(error.vars), %{value: inspect(error.limit)}),
+      fields: [:limit]
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.InvalidOffset do
+  def to_error(error) do
+    %{
+      message: "%{value} is not a valid offset",
+      short_message: "invalid offset",
+      code: "invalid_offset",
+      vars: Map.merge(Map.new(error.vars), %{value: inspect(error.offset)}),
+      fields: [:offset]
+    }
+  end
+end
+
+defimpl AshLua.Error, for: Ash.Error.Query.InvalidPage do
+  def to_error(error) do
+    %{
+      message: "%{value} is not a valid page option",
+      short_message: "invalid page",
+      code: "invalid_page",
+      vars: Map.merge(Map.new(error.vars), %{value: inspect(error.page)}),
+      fields: [:page]
+    }
+  end
+end
+
 defimpl AshLua.Error, for: Ash.Error.Page.InvalidKeyset do
   def to_error(error) do
     %{

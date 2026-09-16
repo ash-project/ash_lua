@@ -140,6 +140,100 @@ defmodule AshLuaTest do
       assert titles == ["Banana", "Cherry"]
     end
 
+    test "an action argument named `limit` reaches the action instead of the query" do
+      for title <- ~w(ab abcd abcdef) do
+        {:ok, _} = Ash.create(Post, %{title: title}, action: :create)
+      end
+
+      {[titles, control], _lua} =
+        AshLua.eval!(
+          """
+          local short = assert(posts.post.search({
+            input = { limit = 4 },
+            sort = "title",
+            fields = { "title" }
+          }))
+
+          local one = assert(posts.post.search({ limit = 1, fields = { "title" } }))
+
+          local titles = {}
+          for i, post in ipairs(short) do titles[i] = post.title end
+          return titles, #one
+          """,
+          otp_app: :ash_lua
+        )
+
+      assert Lua.Table.as_list(titles) == ["ab", "abcd"]
+      assert control == 1
+    end
+
+    test "`input.limit` and the `limit` control apply independently" do
+      for title <- ~w(ab abcd abcdef) do
+        {:ok, _} = Ash.create(Post, %{title: title}, action: :create)
+      end
+
+      {[titles], _lua} =
+        AshLua.eval!(
+          """
+          local r = assert(posts.post.search({
+            input = { limit = 4 },
+            limit = 1,
+            sort = "-title",
+            fields = { "title" }
+          }))
+
+          local titles = {}
+          for i, post in ipairs(r) do titles[i] = post.title end
+          return titles
+          """,
+          otp_app: :ash_lua
+        )
+
+      assert Lua.Table.as_list(titles) == ["abcd"]
+    end
+
+    test "an invalid `input.limit` argument renders as invalid_argument" do
+      {[nil, err], _lua} =
+        AshLua.eval!(
+          """
+          local r, err = posts.post.search({ input = { limit = 2^63 } })
+          return r, err
+          """,
+          otp_app: :ash_lua
+        )
+
+      [first] = error_leaves(err)
+      assert first["code"] == "invalid_argument"
+      assert first["fields"] == ["limit"]
+    end
+
+    test "invalid `limit` / `offset` / `page` controls render as errors" do
+      {[limit_err, offset_err, page_err], _lua} =
+        AshLua.eval!(
+          """
+          local _, limit_err = posts.post.read({ limit = "x" })
+          local _, offset_err = posts.post.read({ offset = "x" })
+          local _, page_err = posts.post.read({ page = { limit = "x" } })
+          return limit_err, offset_err, page_err
+          """,
+          otp_app: :ash_lua
+        )
+
+      [limit] = error_leaves(limit_err)
+      assert limit["code"] == "invalid_limit"
+      assert limit["short_message"] == "invalid limit"
+      assert limit["fields"] == ["limit"]
+      assert Map.new(limit["vars"])["value"] == ~s("x")
+
+      [offset] = error_leaves(offset_err)
+      assert offset["code"] == "invalid_offset"
+      assert offset["fields"] == ["offset"]
+
+      [page] = error_leaves(page_err)
+      assert page["code"] == "invalid_page"
+      assert page["fields"] == ["page"]
+    end
+
     test "update + destroy work via primary-key input" do
       {:ok, post} = Ash.create(Post, %{title: "Old"}, action: :create)
 
@@ -202,5 +296,16 @@ defmodule AshLuaTest do
 
       assert count == 4
     end
+  end
+
+  defp error_leaves(err) do
+    err
+    |> Map.new()
+    |> Map.fetch!("errors")
+    |> Enum.map(fn {_i, leaf} ->
+      leaf
+      |> Map.new()
+      |> Map.update("fields", [], &Lua.Table.as_list/1)
+    end)
   end
 end

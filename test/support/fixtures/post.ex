@@ -9,6 +9,8 @@ defmodule AshLua.Test.Posts.Post do
     data_layer: Ash.DataLayer.Ets,
     extensions: [AshLua.Resource]
 
+  require Ash.Query
+
   ets do
     private? true
   end
@@ -19,6 +21,19 @@ defmodule AshLua.Test.Posts.Post do
     update :publish do
       accept []
       change set_attribute(:published, true)
+    end
+
+    # An argument that shares its name with a reserved query control. The
+    # runtime must deliver it to the action rather than treat it as `limit`.
+    read :search do
+      argument :limit, :integer
+
+      prepare fn query, _context ->
+        case Ash.Query.get_argument(query, :limit) do
+          nil -> query
+          limit -> Ash.Query.filter(query, expr(string_length(title) <= ^limit))
+        end
+      end
     end
 
     action :word_count, :integer do

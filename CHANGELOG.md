@@ -11,6 +11,25 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.2.3](https://github.com/ash-project/ash_lua/compare/v0.2.2...v0.2.3) (2026-09-23)
+
+
+
+
+### Improvements:
+
+* options to force pagination on reads by [@zachdaniel](https://github.com/zachdaniel)
+
+* add new abridged documentation as default read by [@zachdaniel](https://github.com/zachdaniel)
+
+* validate non-overlapping type names by [@zachdaniel](https://github.com/zachdaniel)
+
+### Bug Fixes:
+
+* return host exceptions and query input errors to scripts as structured errors by [@zachdaniel](https://github.com/zachdaniel)
+
+* properly split read inputs in `input` by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.2.2](https://github.com/ash-project/ash_lua/compare/v0.2.1...v0.2.2) (2026-09-08)
 
 

@@ -79,6 +79,18 @@ defmodule AshLua.EvalActions do
         default: :hide,
         doc:
           "How to render fields hidden by authorization in `:eval` results. `:hide` (default) strips them; `:display` renders them as the opaque marker `%{\"opaque\" => \"forbidden\"}` so the agent can tell a forbidden field apart from an absent one."
+      ],
+      require_pagination?: [
+        type: :boolean,
+        default: false,
+        doc:
+          "When `true`, list reads on actions that support pagination always return a page. A call that passes no `page.limit` gets the action's `default_limit`, falling back to `default_page_size`."
+      ],
+      default_page_size: [
+        type: :pos_integer,
+        default: 25,
+        doc:
+          "Page size applied by `require_pagination?` when the action declares no `default_limit`."
       ]
     ],
     entities: [@expose]
@@ -106,5 +118,6 @@ defmodule AshLua.EvalActions do
 
   use Spark.Dsl.Extension,
     sections: [@eval_actions],
-    transformers: [AshLua.EvalActions.Transformers.AddActions]
+    transformers: [AshLua.EvalActions.Transformers.AddActions],
+    verifiers: [AshLua.EvalActions.Verifiers.VerifyUniquePaths]
 end

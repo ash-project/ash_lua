@@ -30,7 +30,9 @@ defmodule AshLua.EvalActions.Run.Eval do
         actor: context.actor,
         tenant: context.tenant,
         context: if(is_map(source_context), do: source_context, else: %{}),
-        forbidden_fields: AshLua.EvalActions.Info.forbidden_fields(resource)
+        forbidden_fields: AshLua.EvalActions.Info.forbidden_fields(resource),
+        require_pagination?: AshLua.EvalActions.Info.require_pagination?(resource),
+        default_page_size: AshLua.EvalActions.Info.default_page_size(resource)
       )
     else
       {:error,

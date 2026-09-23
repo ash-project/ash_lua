@@ -542,9 +542,11 @@ defmodule AshLua.Docs do
     (an operation, record type, named type, or topic). To filter the index by
     keyword, call with `search` set to a term.
 
-    To pull every page at once, call with `name = "full"` — but note the full
-    document is large: #{full_size_hint}. Prefer `search` or a specific `name`
-    unless you really need everything.
+    For a one-line-per-entry overview of every operation and type, call with
+    `name = "abridged"`. That is the best way to see the whole surface.
+
+    `name = "full"` returns every page at once, but it is large:
+    #{full_size_hint}. Prefer `"abridged"`, `search`, or a specific `name`.
 
     #{reserved_input_keys()}
     """
@@ -562,6 +564,233 @@ defmodule AshLua.Docs do
       end)
 
     "## #{title}\n\n#{bullets}"
+  end
+
+  @doc """
+  Renders every operation, record type, named type, and topic id as one line
+  each — names and types only, without descriptions or filter tables.
+  """
+  @spec abridged_doc(manifest_or_opts()) :: String.t()
+  def abridged_doc(manifest_or_opts) do
+    manifest = ensure_manifest(manifest_or_opts)
+    resource_lookup = Manifest.resource_lookup(manifest)
+    type_lookup = Manifest.type_lookup(manifest)
+
+    entrypoints =
+      manifest
+      |> list_callables()
+      |> Enum.map(fn path ->
+        {:ok, entrypoint} = find_callable(manifest, path)
+        {path, entrypoint}
+      end)
+
+    operations =
+      Enum.map(entrypoints, fn {path, entrypoint} ->
+        abridged_operation(path, entrypoint, resource_lookup, type_lookup)
+      end)
+
+    referenced =
+      entrypoints
+      |> Enum.flat_map(fn {_path, %{action: action}} ->
+        Enum.map(action.inputs, & &1.type) ++ List.wrap(action.returns)
+      end)
+      |> Enum.reduce(MapSet.new(), &collect_named_types(&1, type_lookup, &2))
+
+    named_types =
+      manifest.types
+      |> Enum.filter(&MapSet.member?(referenced, &1.module))
+      |> Enum.sort_by(& &1.name)
+      |> Enum.map(&abridged_named_type(&1, type_lookup))
+
+    [
+      abridged_preamble(),
+      abridged_group("Operations", operations),
+      abridged_group("Named types", named_types),
+      "## Topics\n\n" <> Enum.map_join(@topic_ids, ", ", &"`#{&1}`")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n\n")
+  end
+
+  defp collect_named_types(%Manifest.Type{kind: kind} = type, type_lookup, acc)
+       when kind in [:type_ref, :embedded_resource] do
+    module = if kind == :type_ref, do: type.module, else: type.resource_module
+
+    case Map.get(type_lookup, module) do
+      %Manifest.Type{} = definition ->
+        if MapSet.member?(acc, module) do
+          acc
+        else
+          collect_named_type_definition(definition, type_lookup, MapSet.put(acc, module))
+        end
+
+      nil ->
+        acc
+    end
+  end
+
+  defp collect_named_types(%Manifest.Type{} = type, type_lookup, acc) do
+    type
+    |> nested_types()
+    |> Enum.reduce(acc, &collect_named_types(&1, type_lookup, &2))
+  end
+
+  defp collect_named_types(_type, _type_lookup, acc), do: acc
+
+  defp collect_named_type_definition(
+         %Manifest.Type{kind: :embedded_resource, resource: %Manifest.Resource{} = resource},
+         type_lookup,
+         acc
+       ) do
+    resource
+    |> Manifest.Resource.all_fields()
+    |> Enum.reduce(acc, &collect_named_types(&1.type, type_lookup, &2))
+  end
+
+  defp collect_named_type_definition(%Manifest.Type{} = definition, type_lookup, acc),
+    do: collect_named_types(definition, type_lookup, acc)
+
+  defp nested_types(%Manifest.Type{kind: :array, item_type: item_type}), do: [item_type]
+
+  defp nested_types(%Manifest.Type{kind: :union, members: members}) when is_list(members),
+    do: Enum.map(members, & &1.type)
+
+  defp nested_types(%Manifest.Type{kind: :tuple, element_types: elements}) when is_list(elements),
+    do: Enum.map(elements, & &1.type)
+
+  defp nested_types(%Manifest.Type{fields: fields}) when is_list(fields),
+    do: Enum.map(fields, & &1.type)
+
+  defp nested_types(_type), do: []
+
+  defp abridged_preamble do
+    """
+    # API reference
+
+    Every operation below, one line each, with the basic types it takes and
+    returns. Operations return `(result, err)`; wrap a call in `assert(...)` to
+    raise. Action inputs go under `input` (`!` marks required ones); list
+    operations also accept `fields`, `filter`, `sort`, `limit`, `offset`,
+    `page`, and `operation`.
+
+    To learn more, work outward from here:
+
+      1. `search` — call this tool with `search` set to a keyword to find
+         operations, record types, named types, and topics.
+      2. `name` — set it to an operation, record type, named type, or topic id
+         for its full page. A record type's page lists its fields,
+         relationships, and what you can filter and sort on.
+      3. `name = "full"` — every page at once. Very large; use it only when the
+         steps above are not enough.
+    """
+    |> String.trim_trailing()
+  end
+
+  defp abridged_group(_title, []), do: nil
+  defp abridged_group(title, lines), do: "## #{title}\n\n" <> Enum.join(lines, "\n")
+
+  defp abridged_operation(path, entrypoint, resource_lookup, type_lookup) do
+    action = entrypoint.action
+    resource = Manifest.get_resource!(resource_lookup, entrypoint.resource)
+
+    inputs =
+      Enum.map(action.inputs, fn input ->
+        required = if not input.allow_nil? and not input.has_default?, do: "!", else: ""
+
+        "#{input_name(input, action, resource)}#{required}: #{abridged_type(input.type, type_lookup)}"
+      end) ++
+        abridged_pk_inputs(action, resource)
+
+    input_text = if inputs == [], do: "", else: " (" <> Enum.join(inputs, ", ") <> ")"
+
+    "- `#{path}`#{input_text} → #{abridged_return(action, entrypoint.resource, type_lookup)}"
+  end
+
+  defp abridged_pk_inputs(%Manifest.Action{type: type}, resource)
+       when type in [:update, :destroy] do
+    Enum.map(
+      resource.primary_key,
+      &"#{AshLua.FieldNames.to_lua_field_name(resource.module, &1)}!"
+    )
+  end
+
+  defp abridged_pk_inputs(_action, _resource), do: []
+
+  defp abridged_return(%Manifest.Action{type: :read, get?: true}, module, _type_lookup),
+    do: "`#{resource_path(module)}` or nil"
+
+  defp abridged_return(%Manifest.Action{type: :read}, module, _type_lookup),
+    do: "list of `#{resource_path(module)}`"
+
+  defp abridged_return(%Manifest.Action{type: :action, returns: nil}, _module, _type_lookup),
+    do: "unspecified"
+
+  defp abridged_return(%Manifest.Action{type: :action, returns: returns}, _module, type_lookup),
+    do: "`#{abridged_type(returns, type_lookup)}`"
+
+  defp abridged_return(_action, module, _type_lookup), do: "`#{resource_path(module)}`"
+
+  defp abridged_type(%Manifest.Type{kind: :array, item_type: inner}, type_lookup),
+    do: "[#{abridged_type(inner, type_lookup)}]"
+
+  defp abridged_type(%Manifest.Type{kind: :embedded_resource} = type, type_lookup) do
+    case Map.get(type_lookup, type.resource_module) do
+      %Manifest.Type{name: name} -> name
+      _ -> type_summary(type)
+    end
+  end
+
+  defp abridged_type(%Manifest.Type{kind: :union, members: members}, type_lookup)
+       when is_list(members) do
+    "one-of(" <>
+      Enum.map_join(members, " | ", &"#{&1.name}: #{abridged_type(&1.type, type_lookup)}") <> ")"
+  end
+
+  defp abridged_type(%Manifest.Type{kind: kind, fields: fields}, type_lookup)
+       when kind in [:map, :struct, :keyword] and is_list(fields) do
+    "{" <>
+      Enum.map_join(fields, ", ", fn field ->
+        required = if field.allow_nil?, do: "", else: "!"
+        "#{field.name}#{required}: #{abridged_type(field.type, type_lookup)}"
+      end) <> "}"
+  end
+
+  defp abridged_type(%Manifest.Type{} = type, _type_lookup), do: type_summary(type)
+
+  defp abridged_fields(%Manifest.Resource{} = resource, type_lookup) do
+    case Manifest.Resource.all_fields(resource) do
+      [] ->
+        "no fields"
+
+      fields ->
+        Enum.map_join(fields, ", ", fn %Manifest.Field{} = f ->
+          name = AshLua.FieldNames.to_lua_field_name(resource.module, f.name)
+
+          "#{name}#{abridged_field_arguments(f, type_lookup)}: #{abridged_type(f.type, type_lookup)}"
+        end)
+    end
+  end
+
+  defp abridged_field_arguments(%Manifest.Field{arguments: [_ | _] = arguments}, type_lookup) do
+    "(" <>
+      Enum.map_join(arguments, ", ", &"#{&1.name}: #{abridged_type(&1.type, type_lookup)}") <> ")"
+  end
+
+  defp abridged_field_arguments(_field, _type_lookup), do: ""
+
+  defp abridged_named_type(
+         %Manifest.Type{kind: :embedded_resource, resource: %Manifest.Resource{} = resource},
+         type_lookup
+       ) do
+    "- `#{resource.name}` — embedded: #{abridged_fields(resource, type_lookup)}"
+  end
+
+  defp abridged_named_type(%Manifest.Type{kind: :enum, values: values} = type, _type_lookup) do
+    "- `#{type.name}` — enum: " <> Enum.map_join(values, " | ", &to_string/1)
+  end
+
+  defp abridged_named_type(%Manifest.Type{} = type, type_lookup) do
+    "- `#{type.name}` — #{abridged_type(type, type_lookup)}"
   end
 
   @doc """

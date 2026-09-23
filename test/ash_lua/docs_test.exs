@@ -326,6 +326,66 @@ defmodule AshLua.DocsTest do
     end
   end
 
+  describe "abridged_doc/1" do
+    test "lists every callable on one line each" do
+      md = AshLua.Docs.abridged_doc(opts())
+
+      for path <- AshLua.Docs.list_callables(opts()) do
+        assert md =~ "- `#{path}`", "missing callable: #{path}"
+      end
+
+      refute md =~ "## Record types"
+      refute md =~ ~r/^- `posts\.post` — /m
+
+      assert md =~
+               ~r/^- `posts\.post\.create` \(title!: string, .*schedule_config: ScheduleConfig/m
+
+      assert md =~ "→ list of `posts.post`"
+      assert md =~ "## Topics"
+    end
+
+    test "marks required inputs and primary keys" do
+      md = AshLua.Docs.abridged_doc(opts())
+
+      assert md =~ ~r/^- `posts\.post\.word_count` \(text!: string\) → `integer`$/m
+      assert md =~ ~r/^- `posts\.post\.publish` \(id!\) → `posts\.post`$/m
+    end
+
+    test "spells out union members and map fields" do
+      md = AshLua.Docs.abridged_doc(opts())
+
+      assert md =~
+               "content: one-of(text: {body!: string, word_count: integer} | link: {url!: string"
+
+      assert md =~ "metadata: {priority: integer, category: string, notify: boolean}"
+    end
+
+    test "lists only named types that operations reference" do
+      md = AshLua.Docs.abridged_doc(opts())
+
+      assert md =~ ~r/^- `ScheduleConfig` — embedded: /m
+      assert md =~ ~r/^- `Slug` — string$/m
+    end
+
+    test "renders enum values inline" do
+      md = AshLua.Docs.abridged_doc(opts())
+
+      assert md =~ ~r/^- `Status` — enum: /m
+    end
+
+    test "omits descriptions and filter tables" do
+      md = AshLua.Docs.abridged_doc(opts())
+
+      refute md =~ "## Filterable fields"
+      refute md =~ "## Returns"
+      assert byte_size(md) < byte_size(AshLua.Docs.full_doc(opts()))
+    end
+
+    test "the index points to it" do
+      assert AshLua.Docs.index_doc(opts()) =~ ~s(`name = "abridged"`)
+    end
+  end
+
   describe "full_doc/1" do
     test "covers every callable and every record type" do
       md = AshLua.Docs.full_doc(opts())

@@ -39,8 +39,17 @@ defmodule AshLua.EvalActions.Transformers.AddActions do
   end
 
   defp add_docs_action(dsl_state, name) do
-    with {:ok, name_arg} <- Builder.build_action_argument(:name, :string, allow_nil?: true),
-         {:ok, search_arg} <- Builder.build_action_argument(:search, :string, allow_nil?: true) do
+    with {:ok, name_arg} <-
+           Builder.build_action_argument(:name, :string,
+             allow_nil?: true,
+             description:
+               "Omit for a one-line-per-operation overview. Set to an operation, record type, named type, or topic id for its full page, or `full` for every page (very large)."
+           ),
+         {:ok, search_arg} <-
+           Builder.build_action_argument(:search, :string,
+             allow_nil?: true,
+             description: "A keyword to search the index for."
+           ) do
       Builder.add_new_action(dsl_state, :action, name,
         returns: :string,
         arguments: [name_arg, search_arg],

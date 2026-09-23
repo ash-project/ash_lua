@@ -41,6 +41,47 @@ defmodule AshLua.VerifiersTest do
     assert message =~ "missing action :missing"
   end
 
+  describe "derived Lua path collisions" do
+    alias AshLua.Test.Colliding
+
+    test "the eval_actions verifier rejects exposed resources that derive the same path" do
+      dsl =
+        put_eval_actions(AshLua.Test.Posts.MCPActions.spark_dsl_config(), [
+          Colliding.Invoice.Item,
+          Colliding.Subscription.Item
+        ])
+
+      assert {:error, error} = AshLua.EvalActions.Verifiers.VerifyUniquePaths.verify(dsl)
+
+      message = Exception.message(error)
+      assert message =~ ~s(derive the Lua path "colliding.item")
+      assert message =~ inspect(Colliding.Invoice.Item)
+      assert message =~ inspect(Colliding.Subscription.Item)
+    end
+
+    test "an explicit Lua name resolves the collision" do
+      dsl =
+        put_eval_actions(AshLua.Test.Posts.MCPActions.spark_dsl_config(), [
+          Colliding.Invoice.Item,
+          Colliding.Renamed.Item
+        ])
+
+      assert :ok = AshLua.EvalActions.Verifiers.VerifyUniquePaths.verify(dsl)
+    end
+
+    test "the domain verifier rejects resources that derive the same path" do
+      assert {:error, error} =
+               AshLua.Domain.Verifiers.VerifySurface.verify(Colliding.spark_dsl_config())
+
+      assert Exception.message(error) =~ ~s(derive the Lua path "colliding.item")
+    end
+  end
+
+  defp put_eval_actions(dsl, resources) do
+    exposes = Enum.map(resources, &%AshLua.EvalActions.Expose{resource: &1, actions: [:read]})
+    put_in(dsl, [Access.key([:eval_actions]), :entities], exposes)
+  end
+
   defp put_lua_opt(dsl, key, value) do
     put_in(dsl, [Access.key([:lua]), :opts, key], value)
   end

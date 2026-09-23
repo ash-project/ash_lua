@@ -176,7 +176,7 @@ defmodule AshLua.EvalActionsTest do
   end
 
   describe "synthesized :docs action" do
-    test "with no name returns a compact index, not the full page" do
+    test "with no name returns one line per operation, not the full page" do
       input = Ash.ActionInput.for_action(MCPActions, :docs, %{})
 
       assert {:ok, md} = Ash.run_action(input)
@@ -187,10 +187,20 @@ defmodule AshLua.EvalActionsTest do
       assert md =~ "- `posts.comment.read`"
       refute md =~ "# `posts.post.read`"
       refute md =~ "## Returns"
-      # It hints how to get more and how big the full page is.
-      assert md =~ "name = \"full\""
-      assert md =~ "characters"
+      # It points to search, focused pages, and the full page, in that order.
+      assert md =~ ~r/`search`.*`name`.*`name = "full"`/s
       # Out-of-scope actions are not in the index.
+      refute md =~ "posts.comment.create"
+      refute md =~ "posts.user.read"
+    end
+
+    test "with name = \"abridged\" returns one line per scoped entry" do
+      input = Ash.ActionInput.for_action(MCPActions, :docs, %{name: "abridged"})
+
+      assert {:ok, md} = Ash.run_action(input)
+      assert md =~ "# API reference"
+      assert md =~ "- `posts.post.read`"
+      assert md =~ "- `posts.comment.read`"
       refute md =~ "posts.comment.create"
       refute md =~ "posts.user.read"
     end

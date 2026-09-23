@@ -60,6 +60,10 @@ defmodule AshLua do
     * `:forbidden_fields` — `:hide` (default) strips fields hidden by authorization from results;
       `:display` renders them as the opaque marker `%{"opaque" => "forbidden"}` so the consumer can
       tell a forbidden field apart from an absent one.
+    * `:require_pagination?` — when `true`, list reads on actions that support pagination always
+      return a page, sized by `page.limit`, then the action's `default_limit`, then
+      `:default_page_size`.
+    * `:default_page_size` — fallback page size for `:require_pagination?`; defaults to `25`.
     * `:decode` — forwarded to `Lua.eval!/3`; defaults to `true`.
     * `:source` — forwarded to `Lua.eval!/3`; labels runtime errors with a script name.
   """

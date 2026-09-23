@@ -7,6 +7,7 @@ spark_locals_without_parens = [
   action: 4,
   actions: 1,
   argument_names: 1,
+  default_page_size: 1,
   docs_action_name: 1,
   eval_action_name: 1,
   expose?: 1,
@@ -18,6 +19,7 @@ spark_locals_without_parens = [
   namespace: 2,
   namespace: 3,
   otp_app: 1,
+  require_pagination?: 1,
   resource: 1,
   resource: 2
 ]

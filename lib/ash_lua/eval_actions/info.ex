@@ -34,6 +34,16 @@ defmodule AshLua.EvalActions.Info do
   def forbidden_fields(resource),
     do: Extension.get_opt(resource, [:eval_actions], :forbidden_fields, :hide)
 
+  @doc "Whether list reads on paginatable actions always return a page."
+  @spec require_pagination?(Ash.Resource.t() | Spark.Dsl.t()) :: boolean()
+  def require_pagination?(resource),
+    do: Extension.get_opt(resource, [:eval_actions], :require_pagination?, false)
+
+  @doc "Page size used by `require_pagination?` when an action declares no `default_limit`."
+  @spec default_page_size(Ash.Resource.t() | Spark.Dsl.t()) :: pos_integer()
+  def default_page_size(resource),
+    do: Extension.get_opt(resource, [:eval_actions], :default_page_size, 25)
+
   @doc """
   OTP app to scan when building the manifest for `:eval` / `:docs`.
 

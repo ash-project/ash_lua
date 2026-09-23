@@ -37,6 +37,8 @@ defmodule AshLua.Eval do
           | {:tenant, term()}
           | {:context, map()}
           | {:forbidden_fields, :hide | :display}
+          | {:require_pagination?, boolean()}
+          | {:default_page_size, pos_integer()}
           | {:lua, Lua.t()}
           | {:lua_options, keyword()}
           | {:source, String.t()}
@@ -121,8 +123,8 @@ defmodule AshLua.Eval do
   `"lua_error"`, and (since there is exactly one entry) a top-level `message`.
 
   The surface is resolved with `manifest/1`. Runtime options include
-  `:actor`, `:tenant`, `:context`, `:forbidden_fields`, `:source`, `:lua`, and
-  `:lua_options`. `:lua_options` is forwarded to `Lua.new/1` when a prebuilt
+  `:actor`, `:tenant`, `:context`, `:forbidden_fields`, `:require_pagination?`,
+  `:default_page_size`, `:source`, `:lua`, and `:lua_options`. `:lua_options` is forwarded to `Lua.new/1` when a prebuilt
   `:lua` VM is not supplied.
   """
   @spec run(String.t(), run_opts()) :: {:ok, run_result()} | {:error, term()}
@@ -137,9 +139,9 @@ defmodule AshLua.Eval do
   @doc """
   Returns markdown documentation for a scoped AshLua surface.
 
-  Pass neither `:name` nor `:search` for the compact index. Pass
-  `name: "full"` for the full page, a callable/type/topic id for a focused
-  page, or `search: term` for ranked search results.
+  Pass neither `:name` nor `:search` (or `name: "abridged"`) for one line per
+  operation. Pass `name: "full"` for the full page, a callable/type/topic id
+  for a focused page, or `search: term` for ranked search results.
   """
   @spec docs(Manifest.t() | manifest_opts(), keyword() | map()) ::
           {:ok, String.t()} | {:error, term()}
@@ -171,6 +173,8 @@ defmodule AshLua.Eval do
       context: Keyword.get(opts, :context, %{}) || %{},
       forbidden_fields: forbidden_fields
     ]
+    |> maybe_put(:require_pagination?, Keyword.get(opts, :require_pagination?))
+    |> maybe_put(:default_page_size, Keyword.get(opts, :default_page_size))
     |> maybe_put(:lua, Keyword.get(opts, :lua))
     |> maybe_put(:lua_options, Keyword.get(opts, :lua_options))
     |> maybe_put(:source, Keyword.get(opts, :source))
@@ -405,8 +409,8 @@ defmodule AshLua.Eval do
     {:ok, AshLua.Docs.search(manifest, search)}
   end
 
-  defp dispatch_docs(manifest, name, _search) when name in [nil, ""] do
-    {:ok, AshLua.Docs.index_doc(manifest)}
+  defp dispatch_docs(manifest, name, _search) when name in [nil, "", "abridged"] do
+    {:ok, AshLua.Docs.abridged_doc(manifest)}
   end
 
   defp dispatch_docs(manifest, "full", _search) do

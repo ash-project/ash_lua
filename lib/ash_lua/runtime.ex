@@ -37,6 +37,10 @@ defmodule AshLua.Runtime do
     * `:lua_options` — options passed to `Lua.new/1` when `:lua` is not supplied.
     * `:forbidden_fields` — `:hide` (default) strips fields hidden by authorization;
       `:display` renders them as the opaque marker `%{"opaque" => "forbidden"}`.
+    * `:require_pagination?` — when `true`, list reads on actions that support pagination
+      always return a page.
+    * `:default_page_size` — page size for `:require_pagination?` when neither `page.limit`
+      nor the action's `default_limit` is set. Defaults to `25`.
   """
   @spec build(keyword()) :: Lua.t()
   def build(opts) do
@@ -49,7 +53,9 @@ defmodule AshLua.Runtime do
         :manifest,
         :lua,
         :lua_options,
-        forbidden_fields: :hide
+        forbidden_fields: :hide,
+        require_pagination?: false,
+        default_page_size: 25
       ])
 
     manifest =
@@ -70,6 +76,8 @@ defmodule AshLua.Runtime do
       tenant: Keyword.get(opts, :tenant),
       context: Keyword.get(opts, :context, %{}),
       forbidden_fields: forbidden_fields_opt(opts),
+      require_pagination?: Keyword.fetch!(opts, :require_pagination?),
+      default_page_size: Keyword.fetch!(opts, :default_page_size),
       print_output: []
     }
 
@@ -722,6 +730,8 @@ defmodule AshLua.Runtime do
   end
 
   defp regular_call(resource, action, input, controls, ash_opts, fields_input, manifest, state) do
+    controls = maybe_require_page(controls, action, state)
+
     case AshLua.Fields.for_action(manifest, resource, action, fields_input) do
       {:ok, {select, load, template}} ->
         case dispatch(resource, action, input, controls, ash_opts, select, load) do
@@ -1044,6 +1054,47 @@ defmodule AshLua.Runtime do
   # rendering) instead of an opaque options-validation error.
   defp maybe_page(query, nil), do: query
   defp maybe_page(query, page), do: Ash.Query.page(query, page)
+
+  defp maybe_require_page(
+         controls,
+         %{type: :read, get?: false, pagination: %{} = pagination},
+         state
+       ) do
+    case Lua.get_private(state, @private_key) do
+      {:ok, %{require_pagination?: true, default_page_size: default_page_size}} ->
+        limit = pagination.default_limit || default_page_size
+        require_page(controls, pagination, limit)
+
+      _ ->
+        controls
+    end
+  end
+
+  defp maybe_require_page(controls, _action, _state), do: controls
+
+  defp require_page(%{"page" => page} = controls, _pagination, limit) when is_map(page) do
+    %{controls | "page" => Map.put_new(page, "limit", limit)}
+  end
+
+  defp require_page(%{"page" => page} = controls, _pagination, limit) when is_list(page) do
+    %{controls | "page" => Keyword.put_new(page, :limit, limit)}
+  end
+
+  defp require_page(controls, pagination, limit) do
+    {page_limit, controls} = Map.pop(controls, "limit")
+
+    {page, controls} =
+      if pagination.offset? do
+        {offset, controls} = Map.pop(controls, "offset")
+        {%{"limit" => page_limit || limit, "offset" => offset}, controls}
+      else
+        {%{"limit" => page_limit || limit}, controls}
+      end
+
+    Map.put(controls, "page", reject_nil_values(page))
+  end
+
+  defp reject_nil_values(map), do: Map.reject(map, fn {_key, value} -> is_nil(value) end)
 
   defp pop_page_opt(input) do
     case Map.pop(input, "page") do

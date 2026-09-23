@@ -66,6 +66,8 @@ end
 | [`docs_action_name`](#eval_actions-docs_action_name){: #eval_actions-docs_action_name } | `atom` | `:docs` | Name of the synthesized docs action. Defaults to `:docs`. |
 | [`otp_app`](#eval_actions-otp_app){: #eval_actions-otp_app } | `atom` |  | OTP app to scan when building the manifest. Defaults to the agent resource's domain's `:otp_app`. |
 | [`forbidden_fields`](#eval_actions-forbidden_fields){: #eval_actions-forbidden_fields } | `:hide \| :display` | `:hide` | How to render fields hidden by authorization in `:eval` results. `:hide` (default) strips them; `:display` renders them as the opaque marker `%{"opaque" => "forbidden"}` so the agent can tell a forbidden field apart from an absent one. |
+| [`require_pagination?`](#eval_actions-require_pagination?){: #eval_actions-require_pagination? } | `boolean` | `false` | When `true`, list reads on actions that support pagination always return a page. A call that passes no `page.limit` gets the action's `default_limit`, falling back to `default_page_size`. |
+| [`default_page_size`](#eval_actions-default_page_size){: #eval_actions-default_page_size } | `pos_integer` | `25` | Page size applied by `require_pagination?` when the action declares no `default_limit`. |
 
 
 

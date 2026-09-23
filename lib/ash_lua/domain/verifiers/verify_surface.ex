@@ -24,6 +24,7 @@ defmodule AshLua.Domain.Verifiers.VerifySurface do
       []
       |> validate_actions(domain, namespaces)
       |> validate_duplicate_paths(namespaces)
+      |> validate_derived_paths(dsl)
 
     case Enum.reverse(errors) do
       [] -> :ok
@@ -101,6 +102,15 @@ defmodule AshLua.Domain.Verifiers.VerifySurface do
 
         ["duplicate Lua surface path #{inspect(path)} configured for #{details}" | acc]
     end)
+  end
+
+  defp validate_derived_paths(errors, dsl) do
+    dsl
+    |> Verifier.get_entities([:resources])
+    |> Enum.map(& &1.resource)
+    |> AshLua.DerivedPaths.collisions()
+    |> AshLua.DerivedPaths.messages()
+    |> Enum.reverse(errors)
   end
 
   defp safe_resource_domain(resource) do

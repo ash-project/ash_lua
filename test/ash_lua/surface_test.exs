@@ -284,7 +284,7 @@ defmodule AshLua.SurfaceTest do
     assert md =~ "- `surface.page_create`"
     assert md =~ "- `surface.page_rename`"
     assert md =~ "- `surface.page_summarize`"
-    assert md =~ "- `surface.page`"
+    assert md =~ "→ list of `surface.page`"
     assert md =~ ~s(name = "full")
     refute md =~ "- `surface.admin.page_rename`"
     refute md =~ "surface.page.list_for_storefront"

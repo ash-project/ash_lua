@@ -460,19 +460,18 @@ defmodule AshLua.Docs do
         resource = Map.fetch!(resource_lookup, identifier)
         {:ok, render_record_type(resource, resource_lookup, type_lookup, op_display_map)}
 
-      is_binary(identifier) and String.contains?(identifier, ".") ->
-        case find_resource_by_path(manifest, identifier) do
+      # Qualified named types (`Stage.Current`) are dotted too, so a dotted
+      # identifier that isn't a record path may still be a named type
+      is_binary(identifier) ->
+        with :error <- find_resource_by_path(manifest, identifier),
+             nil <- Enum.find(manifest.types, &(&1.name == identifier)) do
+          {:error, :not_found}
+        else
           {:ok, resource} ->
             {:ok, render_record_type(resource, resource_lookup, type_lookup, op_display_map)}
 
-          :error ->
-            {:error, :not_found}
-        end
-
-      is_binary(identifier) ->
-        case Enum.find(manifest.types, &(&1.name == identifier)) do
-          %Manifest.Type{} = t -> {:ok, render_named_type(t, resource_lookup, type_lookup)}
-          _ -> {:error, :not_found}
+          %Manifest.Type{} = type ->
+            {:ok, render_named_type(type, resource_lookup, type_lookup)}
         end
 
       true ->
@@ -740,6 +739,13 @@ defmodule AshLua.Docs do
     end
   end
 
+  defp abridged_type(%Manifest.Type{kind: :type_ref} = type, type_lookup) do
+    case Map.get(type_lookup, type.module) do
+      %Manifest.Type{name: name} -> name
+      nil -> type_summary(type)
+    end
+  end
+
   defp abridged_type(%Manifest.Type{kind: :union, members: members}, type_lookup)
        when is_list(members) do
     "one-of(" <>
@@ -898,13 +904,58 @@ defmodule AshLua.Docs do
     |> String.trim_trailing()
   end
 
-  defp ensure_manifest(%Manifest{} = m), do: AshLua.Surface.for_manifest(m)
+  defp ensure_manifest(%Manifest{} = m),
+    do: m |> AshLua.Surface.for_manifest() |> qualify_colliding_type_names()
 
   defp ensure_manifest(opts) when is_list(opts) do
     otp_app = Keyword.fetch!(opts, :otp_app)
     {:ok, manifest} = AshLua.Surface.for_otp_app(otp_app, Keyword.delete(opts, :otp_app))
-    manifest
+    qualify_colliding_type_names(manifest)
   end
+
+  # Ash's manifest names a type after the last segment of its module, so
+  # `Rating.Current` and `Stage.Current` are both `Current`. Named types are
+  # addressed by name here (anchors, links, `name` lookups), so colliding names
+  # are qualified with as many trailing module segments as it takes to tell
+  # them apart. References resolve through the type lookup by module, so they
+  # pick up the qualified names.
+  defp qualify_colliding_type_names(%Manifest{types: types} = manifest) do
+    renames =
+      types
+      |> Enum.uniq_by(& &1.module)
+      |> Enum.group_by(& &1.name)
+      |> Enum.flat_map(fn
+        {_name, [_unique]} -> []
+        {_name, colliding} -> qualified_names(colliding)
+      end)
+      |> Map.new()
+
+    if renames == %{} do
+      manifest
+    else
+      %{manifest | types: Enum.map(types, &rename_type(&1, Map.get(renames, &1.module)))}
+    end
+  end
+
+  defp qualified_names(types) do
+    segments = Map.new(types, &{&1.module, Module.split(&1.module)})
+    longest = segments |> Map.values() |> Enum.map(&length/1) |> Enum.max()
+
+    Enum.find_value(2..longest//1, fn depth ->
+      names = Map.new(segments, fn {module, parts} -> {module, qualified_name(parts, depth)} end)
+
+      if names |> Map.values() |> Enum.uniq() |> length() == map_size(names), do: names
+    end)
+  end
+
+  defp qualified_name(parts, depth), do: parts |> Enum.take(-depth) |> Enum.join(".")
+
+  defp rename_type(type, nil), do: type
+
+  defp rename_type(%Manifest.Type{resource: %Manifest.Resource{} = resource} = type, name),
+    do: %{type | name: name, resource: %{resource | name: name}}
+
+  defp rename_type(type, name), do: %{type | name: name}
 
   defp record_type_identifier(%Manifest.Resource{module: module}) do
     if AshLua.Resource.Info.expose?(module) do
@@ -1478,13 +1529,16 @@ defmodule AshLua.Docs do
       rows
   end
 
+  # Enum members carry their values inline, so a union's page is enough to
+  # pick a valid value
   defp type_body(%Manifest.Type{kind: :union, members: members}, rl, tl) do
     rows =
       Enum.map_join(members, "\n", fn member ->
-        "| `#{member.name}` | #{type_link(member.type, rl, tl)} |"
+        "| `#{member.name}` | #{type_link(member.type, rl, tl)} | #{enum_values(member.type, tl)} |"
       end)
 
-    "**Kind:** one-of\n\n**Members:**\n\n| Name | Type |\n|------|------|\n" <> rows
+    "**Kind:** one-of\n\n**Members:**\n\n| Name | Type | Values |\n|------|------|--------|\n" <>
+      rows
   end
 
   defp type_body(%Manifest.Type{kind: :tuple, element_types: ets}, rl, tl) when is_list(ets) do
@@ -1502,6 +1556,18 @@ defmodule AshLua.Docs do
   defp type_body(%Manifest.Type{} = t, _rl, _tl) do
     "**Kind:** `#{t.kind}`"
   end
+
+  defp enum_values(%Manifest.Type{kind: :type_ref, module: module}, type_lookup) do
+    case Map.get(type_lookup, module) do
+      %Manifest.Type{} = resolved -> enum_values(resolved, type_lookup)
+      nil -> ""
+    end
+  end
+
+  defp enum_values(%Manifest.Type{kind: :enum, values: [_ | _] = values}, _type_lookup),
+    do: Enum.map_join(values, ", ", &"`#{&1}`")
+
+  defp enum_values(_type, _type_lookup), do: ""
 
   defp type_link(%Manifest.Type{} = type, resource_lookup, type_lookup) do
     case type.kind do

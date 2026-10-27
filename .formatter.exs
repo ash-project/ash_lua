@@ -12,6 +12,7 @@ spark_locals_without_parens = [
   eval_action_name: 1,
   expose?: 1,
   field_names: 1,
+  filter_docs_by_actor?: 1,
   forbidden_fields: 1,
   labels: 1,
   name: 1,

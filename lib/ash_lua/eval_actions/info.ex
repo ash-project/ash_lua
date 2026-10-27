@@ -44,6 +44,11 @@ defmodule AshLua.EvalActions.Info do
   def default_page_size(resource),
     do: Extension.get_opt(resource, [:eval_actions], :default_page_size, 25)
 
+  @doc "Whether `:docs` leaves out operations the calling actor cannot run."
+  @spec filter_docs_by_actor?(Ash.Resource.t() | Spark.Dsl.t()) :: boolean()
+  def filter_docs_by_actor?(resource),
+    do: Extension.get_opt(resource, [:eval_actions], :filter_docs_by_actor?, false)
+
   @doc """
   OTP app to scan when building the manifest for `:eval` / `:docs`.
 

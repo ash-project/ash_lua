@@ -19,17 +19,66 @@ defmodule AshLua.EvalActions.Run.Docs do
       (`AshLua.Docs.abridged_doc/1`), also reachable as `"abridged"`.
 
   Passing both `name` and `search` is an error.
+
+  With `filter_docs_by_actor? true`, operations the calling actor certainly
+  cannot run are left out of every mode. The check runs per call, after the
+  cached manifest is resolved, so the cache stays actor-free.
   """
 
   use Ash.Resource.Actions.Implementation
 
-  @impl true
-  def run(input, _opts, _context) do
-    name = Map.get(input.arguments, :name)
+  require Logger
 
-    [eval_resource: input.resource, cache?: true]
-    |> AshLua.Eval.docs(name: name, search: Map.get(input.arguments, :search))
-    |> maybe_append_pagination_note(input.resource, name)
+  @impl true
+  def run(input, _opts, context) do
+    resource = input.resource
+    name = Map.get(input.arguments, :name)
+    args = [name: name, search: Map.get(input.arguments, :search)]
+
+    result =
+      if AshLua.EvalActions.Info.filter_docs_by_actor?(resource) do
+        with {:ok, manifest} <- AshLua.Eval.manifest(eval_resource: resource, cache?: true) do
+          manifest
+          |> authorized_entrypoints(context)
+          |> AshLua.Eval.docs(args)
+        end
+      else
+        AshLua.Eval.docs([eval_resource: resource, cache?: true], args)
+      end
+
+    maybe_append_pagination_note(result, resource, name)
+  end
+
+  defp authorized_entrypoints(manifest, context) do
+    source_context = Map.get(context, :source_context)
+
+    opts = [
+      tenant: context.tenant,
+      context: if(is_map(source_context), do: source_context, else: %{}),
+      maybe_is: true,
+      run_queries?: false,
+      pre_flight?: false
+    ]
+
+    %{manifest | entrypoints: Enum.filter(manifest.entrypoints, &can?(&1, context.actor, opts))}
+  end
+
+  defp can?(%{resource: resource, action: %{name: action}}, actor, opts) do
+    if Ash.Resource.Info.authorizers(resource) == [] do
+      true
+    else
+      Ash.can?({resource, action}, actor, opts)
+    end
+  rescue
+    e ->
+      Logger.warning("""
+      Error raised while checking whether the actor can run #{inspect(resource)}.#{action}, \
+      so it is left out of the docs. The check builds the action with empty input.
+
+      #{Exception.format(:error, e, __STACKTRACE__)}
+      """)
+
+      false
   end
 
   defp maybe_append_pagination_note({:ok, doc}, resource, name)

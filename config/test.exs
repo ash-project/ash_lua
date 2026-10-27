@@ -10,5 +10,3 @@ config :ash, policies: [show_policy_breakdowns?: true]
 # but its own otp_app is :ash_lua_dep, which intentionally has no config.
 config :ash_lua,
   ash_domains: [AshLua.Test.Posts, AshLua.Test.Surface, AshLua.Test.DepApp]
-
-config :ash_lua_colliding_type_names, ash_domains: [AshLua.Test.CollidingTypeNames]

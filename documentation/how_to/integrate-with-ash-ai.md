@@ -150,6 +150,20 @@ defmodule MyApp.Agents.SupportMCP do
 end
 ```
 
+Labels fit audiences that map to static scopes. When what an actor may do comes
+from policies instead, set `filter_docs_by_actor? true` and `:docs` leaves out
+the operations the calling actor certainly cannot run. Each operation is checked
+with `Ash.can?/3` without running queries, so an operation that only might be
+allowed, such as a read behind a filter policy, stays documented. `:eval` is
+authorized as usual either way.
+
+```elixir
+eval_actions do
+  labels [:public]
+  filter_docs_by_actor? true
+end
+```
+
 ## Wiring it to ash_ai
 
 `ash_ai` exposes Ash actions as MCP tools through its own `tools do ... end`

@@ -91,6 +91,12 @@ defmodule AshLua.EvalActions do
         default: 25,
         doc:
           "Page size applied by `require_pagination?` when the action declares no `default_limit`."
+      ],
+      filter_docs_by_actor?: [
+        type: :boolean,
+        default: false,
+        doc:
+          "When `true`, `:docs` leaves out operations the calling actor certainly cannot run, as decided by `Ash.can?/3` without running queries. Operations that resolve to \"maybe\", such as reads behind filter policies, stay documented. Authorization of `:eval` is unaffected."
       ]
     ],
     entities: [@expose]

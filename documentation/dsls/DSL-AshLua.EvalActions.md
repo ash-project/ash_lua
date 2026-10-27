@@ -68,6 +68,7 @@ end
 | [`forbidden_fields`](#eval_actions-forbidden_fields){: #eval_actions-forbidden_fields } | `:hide \| :display` | `:hide` | How to render fields hidden by authorization in `:eval` results. `:hide` (default) strips them; `:display` renders them as the opaque marker `%{"opaque" => "forbidden"}` so the agent can tell a forbidden field apart from an absent one. |
 | [`require_pagination?`](#eval_actions-require_pagination?){: #eval_actions-require_pagination? } | `boolean` | `false` | When `true`, list reads on actions that support pagination always return a page. A call that passes no `page.limit` gets the action's `default_limit`, falling back to `default_page_size`. |
 | [`default_page_size`](#eval_actions-default_page_size){: #eval_actions-default_page_size } | `pos_integer` | `25` | Page size applied by `require_pagination?` when the action declares no `default_limit`. |
+| [`filter_docs_by_actor?`](#eval_actions-filter_docs_by_actor?){: #eval_actions-filter_docs_by_actor? } | `boolean` | `false` | When `true`, `:docs` leaves out operations the calling actor certainly cannot run, as decided by `Ash.can?/3` without running queries. Operations that resolve to "maybe", such as reads behind filter policies, stay documented. Authorization of `:eval` is unaffected. |
 
 
 

@@ -76,7 +76,7 @@ defmodule AshLua.EvalTest do
   describe "host exceptions during a call" do
     import ExUnit.CaptureLog
 
-    test "a malformed filter returns an invalid_filter error instead of aborting" do
+    test "a malformed filter returns an invalid_filter_value error instead of aborting" do
       assert {:ok, %{result: nil, error: err, print_output: ["before", "after"]}} =
                AshLua.Eval.run(
                  """
@@ -89,7 +89,13 @@ defmodule AshLua.EvalTest do
                )
 
       assert err["class"] == "invalid"
-      assert [%{"code" => "invalid_filter", "fields" => ["filter"]}] = err["errors"]
+
+      assert [
+               %{
+                 "code" => "invalid_filter_value",
+                 "vars" => %{"detail" => "expected a non-empty list or map"}
+               }
+             ] = err["errors"]
     end
 
     test "a malformed sort returns an invalid_sort error instead of aborting" do

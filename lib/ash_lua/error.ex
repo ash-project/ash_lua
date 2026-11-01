@@ -178,6 +178,18 @@ defimpl AshLua.Error, for: Ash.Error.Query.UnsortableField do
   end
 end
 
+defimpl AshLua.Error, for: Ash.Error.Query.InvalidSort do
+  def to_error(error) do
+    %{
+      message: "%{value} is not a valid sort",
+      short_message: "invalid sort",
+      code: "invalid_sort",
+      vars: Map.merge(Map.new(error.vars), %{value: inspect(error.sort)}),
+      fields: [:sort]
+    }
+  end
+end
+
 defimpl AshLua.Error, for: Ash.Error.Query.InvalidSortOrder do
   def to_error(error) do
     %{

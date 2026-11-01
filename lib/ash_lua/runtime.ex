@@ -1011,10 +1011,10 @@ defmodule AshLua.Runtime do
 
   defp maybe_filter_input(query, nil), do: query
 
-  # `filter_input/2` reports most bad input on the query, but a malformed
-  # shape (an empty `or`, a non-table combinator, ...) can still raise from
-  # deep inside the filter parser. Treat any such raise as invalid input on
-  # `filter` rather than letting it escape to the script.
+  # `filter_input/2` reports bad input (including malformed combinators like
+  # an empty `or`) as errors on the query. Older Ash versions raised for some
+  # of those shapes, so treat any raise from deep inside the filter parser as
+  # invalid input on `filter` rather than letting it escape to the script.
   defp maybe_filter_input(query, filter) do
     Ash.Query.filter_input(query, filter)
   rescue

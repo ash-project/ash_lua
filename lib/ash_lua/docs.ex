@@ -303,8 +303,11 @@ defmodule AshLua.Docs do
     (a name that does not exist, in `fields`, `filter`, or `sort` — see
     `vars.path`), `no_such_filter_predicate`, `invalid_filter_value`,
     `invalid_filter`, `invalid_sort`, `invalid_limit`, `invalid_offset`,
-    `invalid_page`, and a fallback `unknown_error` (with a `vars.uuid` to look
-    up in host logs).
+    `invalid_page`, `invalid_table_key` (a function, table, or userdata used
+    as a table key in a call's arguments; see `vars.path`), `invalid_value`
+    (a function, userdata, or table that contains itself passed as a value in
+    a call's arguments; see `vars.path`), and a fallback `unknown_error`
+    (with a `vars.uuid` to look up in host logs).
 
     `fields` lists the field names this error pertains to and is useful for
     surfacing validation problems next to form inputs. `vars` is a free-form
@@ -319,8 +322,10 @@ defmodule AshLua.Docs do
     indexing `nil`, or an exceeded safety budget — the host reports it with
     `class = "lua_error"` and a single `errors` entry whose `code` is
     `"lua_error"`. Because that envelope always holds exactly one entry, it
-    also carries a top-level `message`. A bare non-table value returned in the
-    error slot (`return nil, "oops"`) is reported the same way.
+    also carries a top-level `message`. An error value that is not a table of
+    named fields is reported the same way. A string (`return nil, "oops"`) is
+    the message; for a sequence or a function, the message is the JSON it
+    converts to.
     """
   }
 

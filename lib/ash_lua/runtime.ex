@@ -90,7 +90,8 @@ defmodule AshLua.Runtime do
 
   @doc """
   Returns the lines captured from Lua `print(...)` calls since the VM was
-  built, in call order.
+  built, in call order. A byte that is not part of a valid UTF-8 sequence is
+  replaced with U+FFFD.
   """
   @spec print_output(Lua.t()) :: [String.t()]
   def print_output(%Lua{} = lua) do
@@ -122,11 +123,26 @@ defmodule AshLua.Runtime do
 
   defp install_print_capture(lua) do
     Lua.set!(lua, [:print], fn args, state ->
-      line = Enum.map_join(args, "\t", &format_print_arg(state, &1))
+      line = args |> Enum.map_join("\t", &format_print_arg(state, &1)) |> valid_utf8()
       state = append_print(state, line)
       {[], state}
     end)
   end
+
+  # A Lua string is bytes, but a print line is text. Replace each byte that is
+  # not part of a valid UTF-8 sequence with U+FFFD so the output can always be
+  # encoded as JSON.
+  defp valid_utf8(line) do
+    if String.valid?(line), do: line, else: replace_invalid_utf8(line, "")
+  end
+
+  defp replace_invalid_utf8(<<char::utf8, rest::binary>>, acc),
+    do: replace_invalid_utf8(rest, <<acc::binary, char::utf8>>)
+
+  defp replace_invalid_utf8(<<_byte, rest::binary>>, acc),
+    do: replace_invalid_utf8(rest, <<acc::binary, "\uFFFD">>)
+
+  defp replace_invalid_utf8(<<>>, acc), do: acc
 
   defp format_print_arg(_state, nil), do: "nil"
   defp format_print_arg(_state, true), do: "true"
@@ -135,7 +151,7 @@ defmodule AshLua.Runtime do
   defp format_print_arg(_state, value) when is_number(value), do: to_string(value)
 
   defp format_print_arg(state, {:tref, _} = tref) do
-    Lua.Table.as_string(Lua.decode!(state, tref))
+    Lua.Table.as_string(Lua.decode!(state, tref), formatter: &format_table_value/2)
   rescue
     _ -> "<table>"
   end
@@ -145,6 +161,15 @@ defmodule AshLua.Runtime do
   defp format_print_arg(_state, {:compiled_closure, _, _}), do: "<function>"
   defp format_print_arg(_state, {:udref, _}), do: "<userdata>"
   defp format_print_arg(_state, value), do: inspect(value)
+
+  # Inside a printed table, a Lua function, table reference, or userdata reads
+  # the way a bare one prints, not as the VM's own term.
+  defp format_table_value(_key, {:native_func, _}), do: "<function>"
+  defp format_table_value(_key, {:lua_closure, _, _}), do: "<function>"
+  defp format_table_value(_key, {:compiled_closure, _, _}), do: "<function>"
+  defp format_table_value(_key, {:tref, _}), do: "<table>"
+  defp format_table_value(_key, {:udref, _}), do: "<userdata>"
+  defp format_table_value(_key, value), do: value
 
   defp append_print(state, line) do
     case Lua.get_private(state, @private_key) do
@@ -277,12 +302,13 @@ defmodule AshLua.Runtime do
       %{"message" => m} when is_binary(m) -> m
       _ -> "transaction rolled back"
     end
+  rescue
+    AshLua.Errors.FieldsError -> "transaction rolled back"
   end
 
   defp handle_transaction([resources_arg, fn_ref | _], state, lookup) do
-    resources_value = state |> Lua.decode!(resources_arg) |> Encoder.decode_input()
-
-    with {:ok, names} <- normalize_resource_names(resources_value),
+    with {:ok, resources_value} <- decode_transaction_resources(state, resources_arg),
+         {:ok, names} <- normalize_resource_names(resources_value),
          {:ok, modules} <- resolve_resource_modules(names, lookup) do
       run_transaction(modules, fn_ref, state)
     else
@@ -299,6 +325,12 @@ defmodule AshLua.Runtime do
       fields: [],
       vars: %{}
     })
+  end
+
+  defp decode_transaction_resources(state, resources_arg) do
+    {:ok, state |> Lua.decode!(resources_arg) |> Encoder.decode_input()}
+  rescue
+    error in AshLua.Errors.FieldsError -> {:error, error}
   end
 
   defp normalize_resource_names(value) when is_list(value) do
@@ -518,10 +550,27 @@ defmodule AshLua.Runtime do
         encode_lua_transaction_error(state, :unknown)
 
       env ->
-        {encoded, st} = Lua.encode!(state, env)
+        {encoded, st} = Lua.encode!(state, opaque_lua_references(env))
         {[nil, encoded], st}
     end
+  rescue
+    error in AshLua.Errors.FieldsError -> encode_error_response(state, error)
   end
+
+  # `Lua.encode!/2` cannot take a decoded Lua function or table reference
+  # back, and its error message would show the VM's term. Give those their
+  # opaque markers and leave the rest of the raised table as it was.
+  defp opaque_lua_references(%{} = map) when not is_struct(map),
+    do: Map.new(map, fn {key, value} -> {key, opaque_lua_references(value)} end)
+
+  defp opaque_lua_references(list) when is_list(list),
+    do: Enum.map(list, &opaque_lua_references/1)
+
+  # A userdata value decodes as `{:userdata, term}` and encodes back as the
+  # same userdata, so it is left as it is.
+  defp opaque_lua_references({:userdata, _} = value), do: value
+  defp opaque_lua_references(value) when is_tuple(value), do: Encoder.encode_result(value)
+  defp opaque_lua_references(value), do: value
 
   defp decode_lua_error_value(state, {:tref, _} = value), do: decode_lua_ref(state, value)
   defp decode_lua_error_value(state, {:udref, _} = value), do: decode_lua_ref(state, value)
@@ -600,9 +649,7 @@ defmodule AshLua.Runtime do
   end
 
   defp run_action_callback(resource, action, manifest, args, state) do
-    call_input = decode_call_args(state, args)
-
-    case split_call_input(call_input) do
+    case state |> decode_call_args(args) |> split_call_input() do
       {:ok, action_input, controls} ->
         ash_opts = build_ash_opts(state)
         {fields_input, controls} = Map.pop(controls, "fields")
@@ -666,7 +713,9 @@ defmodule AshLua.Runtime do
     end
   end
 
-  defp split_call_input(input) do
+  defp split_call_input({:error, _error} = error), do: error
+
+  defp split_call_input({:ok, input}) do
     {action_input, controls} = Map.pop(input, "input")
 
     case unexpected_nested_input_keys(controls) do
@@ -900,15 +949,17 @@ defmodule AshLua.Runtime do
     end
   end
 
-  defp decode_call_args(_state, []), do: %{}
+  defp decode_call_args(_state, []), do: {:ok, %{}}
 
   defp decode_call_args(state, [value | _]) do
     decoded = Lua.decode!(state, value)
 
-    case Encoder.decode_input(decoded) do
-      map when is_map(map) -> map
-      _other -> %{}
+    case Encoder.decode_call_input(decoded) do
+      map when is_map(map) -> {:ok, map}
+      _other -> {:ok, %{}}
     end
+  rescue
+    error in AshLua.Errors.FieldsError -> {:error, error}
   end
 
   # Splits the reserved read controls out of the (already field-name-rewritten)

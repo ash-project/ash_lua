@@ -42,6 +42,41 @@ defmodule AshLua.PrintOutputTest do
       assert b =~ "a = 1"
       assert c == "<function>"
     end
+
+    test "a function inside a printed table prints as <function>" do
+      {_, host} = Lua.eval!(Lua.new(), ~S|function helper(s) return s .. "HOST_CONSTANT" end|)
+
+      {_, lua} =
+        AshLua.eval!(
+          """
+          print({ print })
+          print({ f = helper, t = { g = helper } })
+          """,
+          otp_app: :ash_lua,
+          lua: host
+        )
+
+      [a, b] = AshLua.Runtime.print_output(lua)
+      assert a == ~S|{"<function>"}|
+      assert b =~ ~S|f = "<function>"|
+      assert b =~ ~S|g = "<function>"|
+      refute b =~ "HOST_CONSTANT"
+    end
+
+    test "replaces bytes that are not valid UTF-8" do
+      {_, lua} =
+        AshLua.eval!(
+          ~S"""
+          print("\255", "ok")
+          print("caf\195\169")
+          print("\226\130")
+          """,
+          otp_app: :ash_lua
+        )
+
+      assert AshLua.Runtime.print_output(lua) == ["�\tok", "café", "��"]
+      assert {:ok, _json} = Jason.encode(AshLua.Runtime.print_output(lua))
+    end
   end
 
   describe ":eval action surfaces print_output" do

@@ -116,11 +116,19 @@ defmodule AshLua.Eval do
   `%{result: term, error: map | nil, print_output: [String.t()]}`.
 
   `error` is the error table the script returned as its second value,
-  converted to plain maps and lists at every depth (so it is JSON-encodable).
-  When the script itself fails — a syntax error, a Lua runtime error, an
-  exceeded safety budget — or returns a non-table error value, `error` is an
-  envelope with `class = "lua_error"`, a single `errors` entry whose `code` is
-  `"lua_error"`, and (since there is exactly one entry) a top-level `message`.
+  converted to plain maps and lists at every depth the way `result` is: a Lua
+  function, table reference, or userdata becomes an opaque marker such as
+  `%{"opaque" => "function"}`, and text that is not valid UTF-8 is
+  base64-encoded, so the whole reply is JSON-encodable. When the script itself
+  fails — a syntax error, a Lua runtime error, an exceeded safety budget — or
+  returns an error value that is not a table of named fields (a string, a
+  sequence, a function), `error` is an envelope with `class = "lua_error"`, a
+  single `errors` entry whose `code` is `"lua_error"`, and (since there is
+  exactly one entry) a top-level `message`. For a value that is not a string,
+  that message is the JSON the value converts to.
+
+  A returned value that has no JSON form, such as a table with a function as a
+  key, is reported in the same `lua_error` envelope, with `result` set to `nil`.
 
   The surface is resolved with `manifest/1`. Runtime options include
   `:actor`, `:tenant`, `:context`, `:forbidden_fields`, `:require_pagination?`,
@@ -185,14 +193,9 @@ defmodule AshLua.Eval do
 
   defp do_run(script, eval_opts) do
     {values, lua} = AshLua.eval!(script, eval_opts)
-    {result, error} = split_lua_return(values)
+    {result, error} = convert_return(values)
 
-    {:ok,
-     %{
-       result: AshLua.Encoder.encode_result(result),
-       error: error,
-       print_output: AshLua.Runtime.print_output(lua)
-     }}
+    {:ok, %{result: result, error: error, print_output: AshLua.Runtime.print_output(lua)}}
   rescue
     e in [Lua.CompilerException, Lua.RuntimeException] ->
       {:ok,
@@ -232,12 +235,25 @@ defmodule AshLua.Eval do
 
   defp normalize_error_table(list) when is_list(list) do
     case AshLua.Encoder.decode_input(list) do
-      %{"class" => _, "errors" => _} = err -> err
+      %{"class" => _, "errors" => _} = err -> err |> normalize_envelope() |> json_safe()
       _ -> nil
     end
+  rescue
+    AshLua.Errors.FieldsError -> nil
   end
 
   defp normalize_error_table(_), do: nil
+
+  # Both returned values become data the caller can encode as JSON. A value
+  # with no such form (a table key that is a function, say) ends the
+  # conversion, and is reported the way a script failure is.
+  defp convert_return(values) do
+    {result, error} = split_lua_return(values)
+    {AshLua.Encoder.encode_result(result), error}
+  rescue
+    error in AshLua.Errors.FieldsError ->
+      {nil, lua_error_envelope(Exception.message(error), Map.new(error.vars))}
+  end
 
   defp split_lua_return([]), do: {nil, nil}
   defp split_lua_return([value]), do: {value, nil}
@@ -247,23 +263,32 @@ defmodule AshLua.Eval do
 
   # The error slot of a `(result, err)` return is a Lua table; convert it at
   # every depth (like the result slot) so `errors` is a list of maps and the
-  # whole thing is JSON-encodable. A script may also hand back a bare value
-  # (`return nil, "oops"`) — wrap that in the same envelope used for script
-  # failures.
-  defp normalize_error(err) when is_list(err) or is_map(err) do
+  # whole thing is JSON-encodable. A script may also hand back a value that is
+  # not a table of named fields (`return nil, "oops"`, a sequence, a function);
+  # wrap that in the same envelope used for script failures.
+  defp normalize_error(err) do
     case deep_decode(err) do
-      %{} = envelope -> normalize_envelope(envelope)
-      other -> lua_error_envelope(scalar_error_message(other), %{})
+      %{} = envelope when not is_struct(envelope) ->
+        envelope |> normalize_envelope() |> json_safe()
+
+      other ->
+        lua_error_envelope(scalar_error_message(other), %{})
     end
+  rescue
+    error in AshLua.Errors.FieldsError ->
+      lua_error_envelope(Exception.message(error), Map.new(error.vars))
   end
 
-  defp normalize_error(err), do: lua_error_envelope(scalar_error_message(err), %{})
+  # A bare Lua function decodes to a `Lua.VM.Display` struct, which is a map
+  # but not a table.
+  defp deep_decode(value) when is_struct(value), do: value
 
   defp deep_decode(%{} = map) do
     Map.new(map, fn {k, v} -> {to_string(k), AshLua.Encoder.decode_input(v)} end)
   end
 
   defp deep_decode(list) when is_list(list), do: AshLua.Encoder.decode_input(list)
+  defp deep_decode(value), do: value
 
   # An empty Lua table decodes as `%{}`; the envelope's list-valued keys must
   # come back as lists regardless.
@@ -283,10 +308,15 @@ defmodule AshLua.Eval do
 
   defp normalize_error_leaf(other), do: other
 
-  defp scalar_error_message(value) when is_binary(value), do: value
+  defp scalar_error_message(value) when is_binary(value), do: AshLua.Encoder.encode_result(value)
   defp scalar_error_message(value) when is_number(value), do: to_string(value)
   defp scalar_error_message(value) when is_boolean(value), do: to_string(value)
-  defp scalar_error_message(value), do: inspect(value)
+  defp scalar_error_message(value) when is_atom(value), do: Atom.to_string(value)
+
+  # A sequence or a function reads as the JSON it converts to, so a function or
+  # table reference shows as its opaque marker rather than as the VM's own
+  # terms.
+  defp scalar_error_message(value), do: value |> json_safe() |> Jason.encode!()
 
   defp format_lua_error(%Lua.CompilerException{} = e, script, source) do
     case Lua.Parser.parse_structured(script) do
@@ -351,6 +381,11 @@ defmodule AshLua.Eval do
     }
   end
 
+  # Leaves go through `AshLua.Encoder.encode_result/1`, which gives Lua
+  # functions, table references, and text that is not valid UTF-8 the same
+  # form they take in the result slot.
+  defp json_safe(value) when is_struct(value), do: AshLua.Encoder.encode_result(value)
+
   defp json_safe(%{} = map) do
     Map.new(map, fn {key, value} -> {json_key(key), json_safe(value)} end)
   end
@@ -360,10 +395,11 @@ defmodule AshLua.Eval do
   defp json_safe(value) when is_atom(value) and value not in [nil, true, false],
     do: Atom.to_string(value)
 
-  defp json_safe(value), do: value
+  defp json_safe(value), do: AshLua.Encoder.encode_result(value)
 
   defp json_key(:highlight?), do: "highlight"
   defp json_key(key) when is_atom(key), do: Atom.to_string(key)
+  defp json_key(key) when is_binary(key), do: AshLua.Encoder.encode_result(key)
   defp json_key(key), do: to_string(key)
 
   defp normalize_doc_args(args) when is_map(args) do

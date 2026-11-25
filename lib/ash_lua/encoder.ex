@@ -36,28 +36,54 @@ defmodule AshLua.Encoder do
     * empty tables → empty maps (Ash actions are always invoked with a map of params)
 
   Recurses into values.
+
+  A key that is a Lua function, table, or userdata has no text form, so it raises an
+  `AshLua.Errors.FieldsError` with code `invalid_table_key`, and with the keys leading to the
+  table that holds it in `vars.path`. A Lua function, userdata (decoded as
+  `{:userdata, term}`), or table that contains itself as a value is left in place;
+  `decode_call_input/1` rejects those too.
   """
   @spec decode_input(term()) :: term()
-  def decode_input(value)
+  def decode_input(value), do: decode(value, [], :keep)
 
-  def decode_input([]), do: %{}
+  @doc """
+  Like `decode_input/1`, for the arguments of a call into Ash. A Lua function, userdata, or
+  table that contains itself is not data an action can use, and the errors an action raises
+  would show it as text, so as a value it also raises an `AshLua.Errors.FieldsError`, with
+  code `invalid_value` and the keys leading to it in `vars.path`.
+  """
+  @spec decode_call_input(term()) :: term()
+  def decode_call_input(value), do: decode(value, [], :reject)
 
-  def decode_input(list) when is_list(list) do
+  defp decode([], _path, _references), do: %{}
+
+  defp decode(list, path, references) when is_list(list) do
     cond do
       integer_keyed?(list) ->
         list
         |> Enum.sort_by(fn {k, _v} -> k end)
-        |> Enum.map(fn {_k, v} -> decode_input(v) end)
+        |> Enum.map(fn {k, v} -> decode(v, [k | path], references) end)
 
       keyword_pairs?(list) ->
-        Map.new(list, fn {k, v} -> {stringify_key(k), decode_input(v)} end)
+        Map.new(list, fn {k, v} ->
+          key = input_key(k, path)
+          {key, decode(v, [key | path], references)}
+        end)
 
       true ->
-        Enum.map(list, &decode_input/1)
+        Enum.map(list, &decode(&1, path, references))
     end
   end
 
-  def decode_input(other), do: other
+  defp decode(other, path, :reject) do
+    if lua_reference?(other), do: raise(value_error(other, path)), else: other
+  end
+
+  defp decode(other, _path, :keep), do: other
+
+  defp input_key(key, path) do
+    if lua_reference?(key), do: raise(table_key_error(key, path)), else: stringify_key(key)
+  end
 
   defp integer_keyed?([{k, _} | _] = list) when is_integer(k) do
     Enum.all?(list, fn
@@ -157,7 +183,7 @@ defmodule AshLua.Encoder do
         |> Enum.map(fn {_k, v} -> encode_result(v) end)
 
       keyword_pairs?(value) ->
-        Map.new(value, fn {k, v} -> {stringify_key(k), encode_result(v)} end)
+        Map.new(value, fn {k, v} -> {result_key(k), encode_result(v)} end)
 
       true ->
         Enum.map(value, &encode_result/1)
@@ -175,6 +201,10 @@ defmodule AshLua.Encoder do
   def encode_result({:compiled_closure, _, _}), do: %{"opaque" => "function"}
   def encode_result({:tref, _}), do: %{"opaque" => "table_reference"}
   def encode_result({:udref, _}), do: %{"opaque" => "userdata"}
+
+  # Decoding turns a userdata value into `{:userdata, term}`, the host's own
+  # term, which Lua code cannot read; keep it opaque here too.
+  def encode_result({:userdata, _}), do: %{"opaque" => "userdata"}
 
   # An installed Erlang/Elixir callback (e.g. our overridden `print`) decodes
   # as a bare Erlang fun on the way back out. Same opaque marker.
@@ -220,7 +250,7 @@ defmodule AshLua.Encoder do
   end
 
   def encode_result(value) when is_map(value) do
-    Map.new(value, fn {k, v} -> {stringify_key(k), encode_result(v)} end)
+    Map.new(value, fn {k, v} -> {result_key(k), encode_result(v)} end)
   end
 
   # Raw Erlang terms with no Lua representation. They can reach the
@@ -276,6 +306,84 @@ defmodule AshLua.Encoder do
   defp stringify_key(k) when is_atom(k), do: Atom.to_string(k)
   defp stringify_key(k) when is_binary(k), do: k
   defp stringify_key(k), do: to_string(k)
+
+  # A key on the way out follows the same rules as a value: text that is not
+  # valid UTF-8 is base64-encoded, and a Lua reference, which has no text
+  # form, is reported rather than handed to `to_string/1`.
+  defp result_key(key) when is_binary(key), do: encode_result(key)
+
+  defp result_key(key) do
+    if lua_reference?(key), do: raise(table_key_error(key, [])), else: stringify_key(key)
+  end
+
+  # The VM records that decoding leaves in place for values with no Elixir
+  # equivalent. As table keys they have no text form.
+  defp lua_reference?({:native_func, _}), do: true
+  defp lua_reference?({:lua_closure, _, _}), do: true
+  defp lua_reference?({:compiled_closure, _, _}), do: true
+  defp lua_reference?({:tref, _}), do: true
+  defp lua_reference?({:udref, _}), do: true
+  defp lua_reference?({:userdata, _}), do: true
+  defp lua_reference?(_), do: false
+
+  defp path_segment(key) when is_binary(key), do: encode_result(key)
+  defp path_segment(key), do: to_string(key)
+
+  defp lua_reference_kind({:tref, _}), do: "table"
+  defp lua_reference_kind({:udref, _}), do: "userdata"
+  defp lua_reference_kind({:userdata, _}), do: "userdata"
+  defp lua_reference_kind(_function), do: "function"
+
+  defp table_key_error(key, path) do
+    kind = lua_reference_kind(key)
+
+    lua_reference_error(
+      path,
+      "a table key must be a string, a number, or a boolean, not a #{kind}",
+      "invalid table key",
+      "invalid_table_key",
+      %{"key" => kind}
+    )
+  end
+
+  # As a value, a table reference is what decoding leaves for a table that
+  # contains itself.
+  defp value_error(value, path) do
+    {kind, message} =
+      case lua_reference_kind(value) do
+        "table" ->
+          {"table",
+           "a table that contains itself has no data form and cannot be passed to an action"}
+
+        "userdata" ->
+          {"userdata", "a userdata value cannot be passed to an action"}
+
+        "function" ->
+          {"function", "a function has no data form and cannot be passed to an action"}
+      end
+
+    lua_reference_error(path, message, "invalid value", "invalid_value", %{"value" => kind})
+  end
+
+  # `path` holds the keys leading to the bad key or value, innermost first.
+  # The vars keys are strings because Splode drops a `:path` var.
+  defp lua_reference_error(path, message, short_message, code, vars) do
+    path = path |> Enum.reverse() |> Enum.map(&path_segment/1)
+
+    {message, vars} =
+      case path do
+        [] -> {message, vars}
+        path -> {"#{message} (in `#{Enum.join(path, ".")}`)", Map.put(vars, "path", path)}
+      end
+
+    AshLua.Errors.FieldsError.exception(
+      message: message,
+      short_message: short_message,
+      code: code,
+      fields: Enum.take(path, -1),
+      vars: vars
+    )
+  end
 
   @doc """
   Like `encode_with_template/2`, but runs with the given forbidden-field `mode`

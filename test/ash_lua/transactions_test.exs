@@ -238,5 +238,106 @@ defmodule AshLua.TransactionsTest do
 
       assert id == "from-outer-scope"
     end
+
+    test "a function key in the resources list is an invalid_table_key error" do
+      {[nil, err], _lua} =
+        AshLua.eval!(
+          "return utils.transaction.transact({ [print] = 1 }, function() return 1 end)",
+          otp_app: :ash_lua
+        )
+
+      assert %{"class" => "invalid", "errors" => [%{"code" => "invalid_table_key"}]} =
+               AshLua.Encoder.decode_input(err)
+    end
+
+    test "a raised table with a function key is an invalid_table_key error" do
+      {[nil, err], _lua} =
+        AshLua.eval!(
+          """
+          return utils.transaction.transact({ "posts.mnesia_note" }, function()
+            error({ [print] = 1 })
+          end)
+          """,
+          otp_app: :ash_lua
+        )
+
+      assert %{"class" => "invalid", "errors" => [%{"code" => "invalid_table_key"}]} =
+               AshLua.Encoder.decode_input(err)
+    end
+
+    test "a rollback value with a function key uses the default message" do
+      {[nil, err], _lua} =
+        AshLua.eval!(
+          """
+          return utils.transaction.transact({ "posts.mnesia_note" }, function()
+            utils.transaction.rollback({ [print] = 1 })
+          end)
+          """,
+          otp_app: :ash_lua
+        )
+
+      assert %{"errors" => [%{"code" => "rolled_back", "message" => "transaction rolled back"}]} =
+               AshLua.Encoder.decode_input(err)
+    end
+
+    test "userdata in a raised table goes back to Lua as userdata" do
+      {ud, lua} = Lua.encode!(Lua.new(), {:userdata, %{token: "t"}})
+
+      {[kind], _lua} =
+        AshLua.eval!(
+          """
+          local v, e = utils.transaction.transact({ "posts.mnesia_note" }, function()
+            error({ code = "x", u = ud })
+          end)
+          return type(e.errors[1].vars.u)
+          """,
+          otp_app: :ash_lua,
+          lua: Lua.set!(lua, [:ud], ud)
+        )
+
+      assert kind == "userdata"
+    end
+
+    test "a raised table keeps its text as it was" do
+      {[nil, err], _lua} =
+        AshLua.eval!(
+          ~S"""
+          return utils.transaction.transact({ "posts.mnesia_note" }, function()
+            error({ code = "x", message = "\255", f = print })
+          end)
+          """,
+          otp_app: :ash_lua
+        )
+
+      assert %{
+               "errors" => [
+                 %{"message" => <<255>>, "vars" => %{"f" => %{"opaque" => "function"}}}
+               ]
+             } =
+               AshLua.Encoder.decode_input(err)
+    end
+
+    test "a raised error table holding a function comes back with an opaque marker" do
+      {_, lua} = Lua.eval!(Lua.new(), ~S|function helper(s) return s .. "HOST_CONSTANT" end|)
+
+      assert {:ok, %{result: nil, error: err} = reply} =
+               AshLua.Eval.run(
+                 """
+                 local v, err = utils.transaction.transact({ "posts.mnesia_note" }, function()
+                   error({ class = "invalid", errors = { { code = "x", message = "m", vars = { f = helper } } } })
+                 end)
+                 return v, err
+                 """,
+                 otp_app: :ash_lua,
+                 lua: lua
+               )
+
+      assert %{"class" => "invalid", "errors" => [%{"code" => "x", "vars" => vars}]} = err
+      assert vars["f"] == %{"opaque" => "function"}
+
+      json = Jason.encode!(reply)
+      refute json =~ "HOST_CONSTANT"
+      refute json =~ "Prototype"
+    end
   end
 end

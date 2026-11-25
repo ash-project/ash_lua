@@ -48,9 +48,11 @@ defmodule AshLua.FieldNames do
 
   def to_internal_argument_name(resource, action_name, argument_name)
       when is_binary(argument_name) do
-    case Map.fetch(reverse_argument_names(resource, action_name), argument_name) do
+    arguments = public_arguments(Ash.Resource.Info.action(resource, action_name))
+
+    case lua_argument(resource, action_name, arguments, argument_name) do
       {:ok, internal} -> internal
-      :error -> field_atom(argument_name) || argument_name
+      :error -> argument_name
     end
   end
 
@@ -73,8 +75,10 @@ defmodule AshLua.FieldNames do
 
   @doc "Rewrites resource action input keys from Lua names to internal Ash names."
   @spec to_internal_input(module(), map(), map()) :: map()
-  def to_internal_input(resource, %{name: action_name, type: action_type}, input)
+  def to_internal_input(resource, %{name: action_name, type: action_type} = action, input)
       when is_map(input) do
+    arguments = action_arguments(resource, action)
+
     Map.new(input, fn
       {key, value} when key in ["filter", :filter] ->
         {key, to_internal_filter(resource, value)}
@@ -83,7 +87,7 @@ defmodule AshLua.FieldNames do
         {key, to_internal_sort(resource, value)}
 
       {key, value} ->
-        {to_internal_input_key(resource, action_name, action_type, key), value}
+        {to_internal_input_key(resource, action_name, action_type, arguments, key), value}
     end)
   end
 
@@ -91,10 +95,12 @@ defmodule AshLua.FieldNames do
 
   @doc "Rewrites only action input keys, without treating reserved call controls specially."
   @spec to_internal_action_input(module(), map(), map()) :: map()
-  def to_internal_action_input(resource, %{name: action_name, type: action_type}, input)
+  def to_internal_action_input(resource, %{name: action_name, type: action_type} = action, input)
       when is_map(input) do
+    arguments = action_arguments(resource, action)
+
     Map.new(input, fn {key, value} ->
-      {to_internal_action_input_key(resource, action_name, action_type, key), value}
+      {to_internal_action_input_key(resource, action_name, action_type, arguments, key), value}
     end)
   end
 
@@ -111,7 +117,7 @@ defmodule AshLua.FieldNames do
 
   def to_lua_error(error_map, _resource, _action), do: error_map
 
-  defp to_internal_input_key(_resource, _action_name, _action_type, key)
+  defp to_internal_input_key(_resource, _action_name, _action_type, _arguments, key)
        when key in [
               "fields",
               :fields,
@@ -130,24 +136,49 @@ defmodule AshLua.FieldNames do
             ],
        do: key
 
-  defp to_internal_input_key(resource, action_name, action_type, key) do
-    to_internal_action_input_key(resource, action_name, action_type, key)
+  defp to_internal_input_key(resource, action_name, action_type, arguments, key) do
+    to_internal_action_input_key(resource, action_name, action_type, arguments, key)
   end
 
-  defp to_internal_action_input_key(resource, action_name, action_type, key) do
-    argument_name = to_internal_argument_name(resource, action_name, key)
-
-    cond do
-      argument_name != key and argument_name != to_string(key) ->
+  defp to_internal_action_input_key(resource, action_name, action_type, arguments, key) do
+    case lua_argument(resource, action_name, arguments, key) do
+      {:ok, argument_name} ->
         Atom.to_string(argument_name)
 
-      action_type in [:read, :create, :update, :destroy] ->
+      :error when action_type in [:read, :create, :update, :destroy] ->
         to_internal_field_key(resource, key)
 
-      true ->
+      :error ->
         key
     end
   end
+
+  # A Lua name names an argument when `argument_names` maps it to one, or when
+  # it is a public argument's own name. This goes by those names alone: whether
+  # an atom with the name exists in the VM must not decide it, or a key that
+  # `field_names` renames would skip the field mapping whenever such an atom
+  # exists somewhere else.
+  defp lua_argument(resource, action_name, arguments, name) when is_binary(name) do
+    case Map.fetch(reverse_argument_names(resource, action_name), name) do
+      {:ok, internal} -> {:ok, internal}
+      :error -> Map.fetch(arguments, name)
+    end
+  end
+
+  defp lua_argument(_resource, _action_name, _arguments, _name), do: :error
+
+  defp action_arguments(_resource, %{arguments: _} = action), do: public_arguments(action)
+
+  defp action_arguments(resource, %{name: action_name}),
+    do: public_arguments(Ash.Resource.Info.action(resource, action_name))
+
+  # The action's public arguments by name. Input cannot set a private argument,
+  # so its name is not an argument's Lua name.
+  defp public_arguments(%{arguments: arguments}) do
+    for %{name: name, public?: true} <- arguments, into: %{}, do: {Atom.to_string(name), name}
+  end
+
+  defp public_arguments(_action), do: %{}
 
   defp to_lua_error_leaf(leaf, resource, action_name, action_type) when is_map(leaf) do
     Map.update(leaf, "fields", [], fn fields ->

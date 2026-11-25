@@ -100,6 +100,28 @@ defmodule AshLua.SurfaceTest do
     refute Map.has_key?(record, "featured?")
   end
 
+  test "field_names rewrite input fields when an atom with the Lua name exists" do
+    # Made at runtime: a literal would be folded into this module's atom table.
+    _ = ["head", "line"] |> Enum.join() |> String.to_atom()
+
+    title = unique_title("Before")
+    renamed = unique_title("After")
+    {:ok, page} = Ash.create(Page, %{title: title}, action: :create)
+
+    script = """
+    local page = assert(surface.page_rename({
+      input = { id = "#{page.id}", headline = "#{renamed}" },
+      fields = { "headline" }
+    }))
+
+    return page
+    """
+
+    {[record], _lua} = AshLua.eval!(script, opts())
+
+    assert Map.new(record)["headline"] == renamed
+  end
+
   test "argument_names rewrite generic action inputs" do
     script = """
     return assert(surface.page_summarize({
